@@ -11,6 +11,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/lightninglabs/neutrino"
 )
 
 // isCurrentDelta is the delta duration we'll use from the present time to
@@ -51,6 +52,11 @@ type Interface interface {
 	BackEnd() string
 	TestMempoolAccept([]*wire.MsgTx, float64) ([]*btcjson.TestMempoolAcceptResult, error)
 	MapRPCErr(err error) error
+}
+
+type MixingInterface interface {
+	Interface
+	StartWithMixing(w neutrino.MixMessageAccepter) error
 }
 
 // Notification types.  These are defined here and processed from from reading

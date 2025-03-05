@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcwallet/build"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/rpc/legacyrpc"
@@ -71,7 +72,7 @@ func walletMain() error {
 
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
 	loader := wallet.NewLoader(
-		activeNet.Params, dbDir, true, cfg.DBTimeout, 250,
+		activeNet.Params, dbDir, true, cfg.DBTimeout, 250, cfg.Mixing,
 	)
 
 	// Create and start HTTP server to serve wallet client connections.
@@ -185,17 +186,27 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 				continue
 			}
 			chainClient = chain.NewNeutrinoClient(activeNet.Params, chainService)
-
-			err = chainClient.Start(context.Background())
-			if err != nil {
-				log.Errorf("Couldn't start Neutrino client: %s", err)
-			}
 		} else {
-			chainClient, err = startChainRPC(certs)
+			chainClient, err = initChainRPC(certs)
 			if err != nil {
 				log.Errorf("Unable to open connection to consensus RPC server: %v", err)
 				continue
 			}
+		}
+
+		var mixPool *mixpool.Pool
+		mixingBackend, backendSupportsMixing := chainClient.(chain.MixingInterface)
+		if backendSupportsMixing && loader.MixingEnabled() {
+			mixPool = mixpool.NewPool(chain.NewMixpoolBlockchain(chainClient, activeNet.Params))
+			err = mixingBackend.StartWithMixing((*chain.MixpoolMsgAccepter)(mixPool))
+		} else {
+			if loader.MixingEnabled() {
+				log.Warnf("Connected backend (%T) does not support mixing", chainClient)
+			}
+			err = chainClient.Start(context.Background())
+		}
+		if err != nil {
+			log.Errorf("Couldn't start Neutrino client: %s", err)
 		}
 
 		// Rather than inlining this logic directly into the loader
@@ -206,6 +217,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		// mutex is used to make this concurrent safe.
 		associateRPCClient := func(w *wallet.Wallet) {
 			w.SynchronizeRPC(chainClient)
+			w.InitMixing(mixPool)
 			if legacyRPCServer != nil {
 				legacyRPCServer.SetChainServer(chainClient)
 			}
@@ -264,11 +276,11 @@ func readCAFile() []byte {
 	return certs
 }
 
-// startChainRPC opens a RPC client connection to a btcd server for blockchain
+// initChainRPC opens a RPC client connection to a btcd server for blockchain
 // services.  This function uses the RPC options from the global config and
 // there is no recovery in case the server is not available or if there is an
 // authentication error.  Instead, all requests to the client will simply error.
-func startChainRPC(certs []byte) (*chain.RPCClient, error) {
+func initChainRPC(certs []byte) (*chain.RPCClient, error) {
 	log.Infof("Attempting RPC client connection to %v", cfg.RPCConnect)
 	rpcc, err := chain.NewRPCClient(activeNet.Params, cfg.RPCConnect,
 		cfg.BtcdUsername, cfg.BtcdPassword, certs, cfg.DisableClientTLS, 0)
@@ -276,6 +288,5 @@ func startChainRPC(certs []byte) (*chain.RPCClient, error) {
 		return nil, err
 	}
 
-	err = rpcc.Start(context.Background())
 	return rpcc, err
 }

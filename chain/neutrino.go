@@ -13,6 +13,8 @@ import (
 	"github.com/btcsuite/btcd/btcutil/gcs/builder"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -72,6 +74,40 @@ type NeutrinoClient struct {
 // A compile-time check to ensure that RPCClient satisfies the chain.Interface
 // interface.
 var _ Interface = (*NeutrinoClient)(nil)
+
+type MixpoolBlockchain struct {
+	chainClient Interface
+	params      *chaincfg.Params
+}
+
+func NewMixpoolBlockchain(chainClient Interface, params *chaincfg.Params) *MixpoolBlockchain {
+	return &MixpoolBlockchain{chainClient: chainClient, params: params}
+}
+
+func (b *MixpoolBlockchain) CurrentTip() (chainhash.Hash, int64) {
+	bs, err := b.chainClient.BlockStamp()
+	if err != nil {
+		return chainhash.Hash{}, 0
+	}
+	return bs.Hash, int64(bs.Height)
+}
+
+func (b *MixpoolBlockchain) ChainParams() *chaincfg.Params {
+	return b.params
+}
+
+type MixpoolMsgAccepter mixpool.Pool
+
+// AcceptMixMessage adds a mixing message received from the network backend to
+// the wallet's mixpool.
+func (p *MixpoolMsgAccepter) AcceptMixMessage(msg mixing.Message) error {
+	_, err := (*mixpool.Pool)(p).AcceptMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // NewNeutrinoClient creates a new NeutrinoClient struct with a backing
 // ChainService.

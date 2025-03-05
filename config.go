@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"decred.org/cspp/v2/solverrpc"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcwallet/build"
@@ -114,6 +115,9 @@ type config struct {
 
 	// Deprecated options
 	DataDir *cfgutil.ExplicitString `short:"b" long:"datadir" default-mask:"-" description:"DEPRECATED -- use appdata instead"`
+
+	Mixing     bool                    `long:"mixing" description:"Enable mixing support"`
+	CSPPSolver *cfgutil.ExplicitString `long:"csppsolver" description:"Path to CSPP solver executable (if not in PATH)"`
 }
 
 // cleanAndExpandPath expands environement variables and leading ~ in the
@@ -282,6 +286,7 @@ func loadConfig() (*config, []string, error) {
 		BanDuration:            neutrino.BanDuration,
 		BanThreshold:           neutrino.BanThreshold,
 		DBTimeout:              wallet.DefaultDBTimeout,
+		CSPPSolver:             cfgutil.NewExplicitString(solverrpc.SolverProcess),
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -711,6 +716,27 @@ func loadConfig() (*config, []string, error) {
 	}
 	if cfg.BtcdPassword == "" {
 		cfg.BtcdPassword = cfg.Password
+	}
+
+	var solverMustWork bool
+	if cfg.Mixing {
+		if cfg.CSPPSolver.ExplicitlySet() {
+			solverrpc.SolverProcess = cfg.CSPPSolver.Value
+			solverMustWork = true
+		} else if err := solverrpc.StartSolver(); err == nil {
+			solverMustWork = true
+		} else {
+			log.Warnf("Unable to start csppsolver; must rely on " +
+				"other peers publishing results")
+		}
+	}
+
+	if solverMustWork {
+		if err := testStartedSolverWorks(); err != nil {
+			err := fmt.Errorf("csppsolver process is not operating properly: %v", err)
+			fmt.Fprintln(os.Stderr, err)
+			return nil, nil, err
+		}
 	}
 
 	// Warn about missing config file after the final command line parse

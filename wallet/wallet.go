@@ -22,6 +22,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/chain"
@@ -163,6 +164,10 @@ type Wallet struct {
 
 	NtfnServer *NotificationServer
 
+	// Mixing
+	mixing  bool
+	mixpool *mixpool.Pool
+
 	chainParams *chaincfg.Params
 	wg          sync.WaitGroup
 
@@ -242,6 +247,13 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanBatchHandler()
 	go w.rescanProgressHandler()
 	go w.rescanRPCHandler()
+}
+
+func (w *Wallet) InitMixing(mixPool *mixpool.Pool) {
+	w.mixing = mixPool != nil
+	w.mixpool = mixPool
+	// w.mixClient = mixclient.NewClient((*mixingWallet)(w))
+	// w.mixClient.SetLogger(loggers.MixcLog)
 }
 
 // requireChainClient marks that a wallet method can only be completed when the

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcwallet/chain"
@@ -62,6 +63,7 @@ var (
 	grpcLog      = backendLog.Logger("GRPC")
 	legacyRPCLog = backendLog.Logger("RPCS")
 	btcnLog      = backendLog.Logger("BTCN")
+	mixcLog      = backendLog.Logger("MIXC")
 )
 
 // Initialize package-global logger variables.
@@ -74,6 +76,7 @@ func init() {
 	rpcserver.UseLogger(grpcLog)
 	legacyrpc.UseLogger(legacyRPCLog)
 	neutrino.UseLogger(btcnLog)
+	mixpool.UseLogger(mixcLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -86,6 +89,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"GRPC": grpcLog,
 	"RPCS": legacyRPCLog,
 	"BTCN": btcnLog,
+	"MIXC": mixcLog,
 }
 
 // initLogRotator initializes the logging rotater to write logs to logFile and
