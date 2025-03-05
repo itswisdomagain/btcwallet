@@ -96,17 +96,23 @@ func (b *MixpoolBlockchain) ChainParams() *chaincfg.Params {
 	return b.params
 }
 
-type MixpoolMsgAccepter mixpool.Pool
+type MixWallet mixpool.Pool
 
 // AcceptMixMessage adds a mixing message received from the network backend to
 // the wallet's mixpool.
-func (p *MixpoolMsgAccepter) AcceptMixMessage(msg mixing.Message) error {
-	_, err := (*mixpool.Pool)(p).AcceptMessage(msg)
+func (w *MixWallet) AcceptMixMessage(msg mixing.Message) error {
+	_, err := (*mixpool.Pool)(w).AcceptMessage(msg)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// MixMessage queries the mixpool for a message.  Only messages that have been
+// recently inv'd should be queried.
+func (w *MixWallet) MixMessage(query *chainhash.Hash) (mixing.Message, error) {
+	return (*mixpool.Pool)(w).Message(query)
 }
 
 // NewNeutrinoClient creates a new NeutrinoClient struct with a backing

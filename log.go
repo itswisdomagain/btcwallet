@@ -63,6 +63,7 @@ var (
 	grpcLog      = backendLog.Logger("GRPC")
 	legacyRPCLog = backendLog.Logger("RPCS")
 	btcnLog      = backendLog.Logger("BTCN")
+	mixpLog      = backendLog.Logger("MIXP")
 	mixcLog      = backendLog.Logger("MIXC")
 )
 
@@ -76,7 +77,7 @@ func init() {
 	rpcserver.UseLogger(grpcLog)
 	legacyrpc.UseLogger(legacyRPCLog)
 	neutrino.UseLogger(btcnLog)
-	mixpool.UseLogger(mixcLog)
+	mixpool.UseLogger(mixpLog)
 }
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -89,6 +90,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"GRPC": grpcLog,
 	"RPCS": legacyRPCLog,
 	"BTCN": btcnLog,
+	"MIXP": mixpLog,
 	"MIXC": mixcLog,
 }
 

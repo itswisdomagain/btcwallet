@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/btcjson"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
@@ -56,7 +57,8 @@ type Interface interface {
 
 type MixingInterface interface {
 	Interface
-	StartWithMixing(w neutrino.MixMessageAccepter) error
+	StartWithMixing(mixCfg neutrino.MixWallet) error
+	PublishMixMessages(msgs ...mixing.Message) error
 }
 
 // Notification types.  These are defined here and processed from from reading

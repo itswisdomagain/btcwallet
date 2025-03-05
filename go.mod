@@ -73,6 +73,5 @@ go 1.24.6
 
 replace (
 	github.com/btcsuite/btcd => ../btcd
-	// github.com/decred/dcrd/mixing => ../dcrd/mixing
 	github.com/lightninglabs/neutrino => ../neutrino
 )

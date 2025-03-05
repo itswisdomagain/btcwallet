@@ -7,6 +7,7 @@ package wallet
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,9 +23,11 @@ import (
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing/mixclient"
 	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
@@ -165,8 +168,10 @@ type Wallet struct {
 	NtfnServer *NotificationServer
 
 	// Mixing
-	mixing  bool
-	mixpool *mixpool.Pool
+	mixing        bool
+	mixpool       *mixpool.Pool
+	mixClient     *mixclient.Client
+	stopMixClient context.CancelFunc
 
 	chainParams *chaincfg.Params
 	wg          sync.WaitGroup
@@ -249,11 +254,11 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanRPCHandler()
 }
 
-func (w *Wallet) InitMixing(mixPool *mixpool.Pool) {
+func (w *Wallet) InitMixing(mixPool *mixpool.Pool, mixcLog btclog.Logger) {
 	w.mixing = mixPool != nil
 	w.mixpool = mixPool
-	// w.mixClient = mixclient.NewClient((*mixingWallet)(w))
-	// w.mixClient.SetLogger(loggers.MixcLog)
+	w.mixClient = mixclient.NewClient((*mixingWallet)(w))
+	w.mixClient.SetLogger(mixcLog)
 }
 
 // requireChainClient marks that a wallet method can only be completed when the
@@ -301,6 +306,9 @@ func (w *Wallet) Stop() {
 	select {
 	case <-quit:
 	default:
+		if w.mixing {
+			w.stopMixClient()
+		}
 		close(quit)
 		w.chainClientLock.Lock()
 		if w.chainClient != nil {

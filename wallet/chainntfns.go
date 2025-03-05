@@ -6,6 +6,7 @@ package wallet
 
 import (
 	"bytes"
+	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -156,6 +157,13 @@ func (w *Wallet) handleChainNotifications() {
 						"sync due to error: %v", err)
 
 					return
+				}
+
+				// Start the mix client background process.
+				if w.mixing {
+					ctx, cancel := context.WithCancel(context.Background())
+					w.stopMixClient = cancel
+					go w.mixClient.Run(ctx)
 				}
 
 			case chain.BlockConnected:

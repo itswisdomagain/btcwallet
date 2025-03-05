@@ -198,7 +198,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		mixingBackend, backendSupportsMixing := chainClient.(chain.MixingInterface)
 		if backendSupportsMixing && loader.MixingEnabled() {
 			mixPool = mixpool.NewPool(chain.NewMixpoolBlockchain(chainClient, activeNet.Params))
-			err = mixingBackend.StartWithMixing((*chain.MixpoolMsgAccepter)(mixPool))
+			err = mixingBackend.StartWithMixing((*chain.MixWallet)(mixPool))
 		} else {
 			if loader.MixingEnabled() {
 				log.Warnf("Connected backend (%T) does not support mixing", chainClient)
@@ -217,7 +217,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		// mutex is used to make this concurrent safe.
 		associateRPCClient := func(w *wallet.Wallet) {
 			w.SynchronizeRPC(chainClient)
-			w.InitMixing(mixPool)
+			w.InitMixing(mixPool, mixcLog)
 			if legacyRPCServer != nil {
 				legacyRPCServer.SetChainServer(chainClient)
 			}
