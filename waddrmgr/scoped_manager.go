@@ -1005,7 +1005,7 @@ func (s *ScopedKeyManager) accountAddrType(acctInfo *accountInfo,
 //
 // This function MUST be called with the manager lock held for writes.
 func (s *ScopedKeyManager) nextAddresses(ns walletdb.ReadWriteBucket,
-	account uint32, numAddresses uint32, internal bool) ([]ManagedAddress,
+	account uint32, numAddresses uint32, internal bool, checkAddress func(ManagedAddress) error) ([]ManagedAddress,
 	error) {
 
 	// The next address can only be generated for accounts that have
@@ -1110,6 +1110,10 @@ func (s *ScopedKeyManager) nextAddresses(ns walletdb.ReadWriteBucket,
 		}
 		managedAddr := addr
 		nextKey.Zero()
+
+		if err = checkAddress(managedAddr); err != nil {
+			return nil, err
+		}
 
 		info := unlockDeriveInfo{
 			managedAddr: managedAddr,
@@ -1423,7 +1427,7 @@ func (s *ScopedKeyManager) NextExternalAddresses(ns walletdb.ReadWriteBucket,
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	return s.nextAddresses(ns, account, numAddresses, false)
+	return s.nextAddresses(ns, account, numAddresses, false, nil)
 }
 
 // NextInternalAddresses returns the specified number of next chained addresses
@@ -1440,7 +1444,32 @@ func (s *ScopedKeyManager) NextInternalAddresses(ns walletdb.ReadWriteBucket,
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	return s.nextAddresses(ns, account, numAddresses, true)
+	return s.nextAddresses(ns, account, numAddresses, true, nil)
+}
+
+// NextInternalAddresses returns the specified number of next chained addresses
+// that are intended for internal use such as change from the address manager.
+func (s *ScopedKeyManager) NextAddresses(ns walletdb.ReadWriteBucket,
+	account, branch uint32, numAddresses uint32,
+	checkAddress func(ManagedAddress) error) ([]ManagedAddress, error) {
+
+	// Enforce maximum account number.
+	if account > MaxAccountNum {
+		err := managerError(ErrAccountNumTooHigh, errAcctTooHigh, nil)
+		return nil, err
+	}
+
+	var internal bool
+	if branch == InternalBranch {
+		internal = true
+	} else if branch != ExternalBranch {
+		return nil, fmt.Errorf("invalid account branch %v", branch)
+	}
+
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	return s.nextAddresses(ns, account, numAddresses, internal, checkAddress)
 }
 
 // ExtendExternalAddresses ensures that all valid external keys through

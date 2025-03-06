@@ -170,6 +170,7 @@ type Wallet struct {
 	// Mixing
 	mixing        bool
 	mixpool       *mixpool.Pool
+	mixSems       mixSemaphores
 	mixClient     *mixclient.Client
 	stopMixClient context.CancelFunc
 
@@ -254,9 +255,14 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanRPCHandler()
 }
 
+// MixSplitLimit      int    `long:"mixsplitlimit" description:"Connection limit
+// to CoinShuffle++ server per change amount"` TODO: Add to loader cfg.
+const mixSplitLimit = 10
+
 func (w *Wallet) InitMixing(mixPool *mixpool.Pool, mixcLog btclog.Logger) {
 	w.mixing = mixPool != nil
 	w.mixpool = mixPool
+	w.mixSems = newMixSemaphores(mixSplitLimit)
 	w.mixClient = mixclient.NewClient((*mixingWallet)(w))
 	w.mixClient.SetLogger(mixcLog)
 }
@@ -3251,6 +3257,75 @@ func (w *Wallet) SortedActivePaymentAddresses() ([]string, error) {
 
 	sort.Strings(addrStrs)
 	return addrStrs, nil
+}
+
+// NewAddresses returns the specified number of next chained addresses for a
+// wallet.
+func (w *Wallet) NewAddresses(account, branch, numAddresses uint32,
+	scope waddrmgr.KeyScope, checkAddress func(waddrmgr.ManagedAddress) error) ([]btcutil.Address, error) {
+
+	chainClient, err := w.requireChainClient()
+	if err != nil {
+		return nil, err
+	}
+
+	// The address manager uses OnCommit on the walletdb tx to update the
+	// in-memory state of the account state. But because the commit happens
+	// _after_ the account manager internal lock has been released, there
+	// is a chance for the address index to be accessed concurrently, even
+	// though the closure in OnCommit re-acquires the lock. To avoid this
+	// issue, we surround the whole address creation process with a lock.
+	w.newAddrMtx.Lock()
+	defer w.newAddrMtx.Unlock()
+
+	var (
+		addresses []btcutil.Address
+		props     *waddrmgr.AccountProperties
+	)
+
+	err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
+		manager, err := w.Manager.FetchScopedKeyManager(scope)
+		if err != nil {
+			return err
+		}
+
+		// Get next addresses from wallet.
+		addrmgrNs := tx.ReadWriteBucket(waddrmgrNamespaceKey)
+		addrs, err := manager.NextAddresses(addrmgrNs, account, branch, numAddresses, checkAddress)
+		if err != nil {
+			return err
+		}
+
+		if branch == waddrmgr.ExternalBranch {
+			props, err = manager.AccountProperties(addrmgrNs, account)
+			if err != nil {
+				log.Errorf("Cannot fetch account properties for notification "+
+					"after deriving next external address: %v", err)
+				return err
+			}
+		}
+
+		for i := range addrs {
+			addresses = append(addresses, addrs[i].Address())
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Notify the rpc server about the newly created addresses.
+	err = chainClient.NotifyReceived(addresses)
+	if err != nil {
+		return nil, err
+	}
+
+	if props != nil {
+		w.NtfnServer.notifyAccountProperties(props)
+	}
+
+	return addresses, nil
 }
 
 // NewAddress returns the next external chained address for a wallet.
