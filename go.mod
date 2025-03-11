@@ -39,7 +39,6 @@ require (
 require (
 	decred.org/dcrwallet/v4 v4.3.1 // indirect
 	github.com/aead/siphash v1.0.1 // indirect
-	github.com/btcsuite/btcd/v2transport v1.0.1 // indirect
 	github.com/btcsuite/go-socks v0.0.0-20170105172521-4720035b7bfd // indirect
 	github.com/companyzero/sntrup4591761 v0.0.0-20220309191932-9e0f3af2f07a // indirect
 	github.com/decred/dcrd/chaincfg/chainhash v1.0.5 // indirect
@@ -73,6 +72,8 @@ require (
 go 1.24.6
 
 replace (
-	github.com/btcsuite/btcd => ../btcd
-	github.com/lightninglabs/neutrino => ../neutrino
+	// github.com/btcsuite/btcd => ../btcd
+	// github.com/lightninglabs/neutrino => ../neutrino
+	github.com/btcsuite/btcd => github.com/itswisdomagain/btcd v0.0.0-20250311142659-d10cbdfff775
+	github.com/lightninglabs/neutrino => github.com/itswisdomagain/neutrino v0.0.0-20250311143743-5c100d92e59a
 )

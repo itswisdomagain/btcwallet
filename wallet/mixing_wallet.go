@@ -6,19 +6,14 @@ package wallet
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/chain"
-	"github.com/btcsuite/btcwallet/waddrmgr"
-	"github.com/btcsuite/btcwallet/walletdb"
 )
 
 // mixingWallet implements the mixclient.Wallet interface.
@@ -86,54 +81,20 @@ func (w *mixingWallet) SignInput(tx *wire.MsgTx, index int, prevScript []byte) e
 	wallet := (*Wallet)(w)
 	in := tx.TxIn[index]
 
-	return walletdb.View(wallet.db, func(dbtx walletdb.ReadTx) error {
-		addrmgrNs := dbtx.ReadBucket(waddrmgrNamespaceKey)
+	privKey, compressed, privKeyDone, err := wallet.privateKey(prevScript)
+	if err != nil {
+		return err
+	}
 
-		// Set up our callbacks that we pass to txscript so it can
-		// look up the appropriate keys and scripts by address.
-		getKey := txscript.KeyClosure(func(addr btcutil.Address) (*btcec.PrivateKey, bool, error) {
-			address, err := w.Manager.Address(addrmgrNs, addr)
-			if err != nil {
-				return nil, false, err
-			}
+	defer privKeyDone()
+	sigscript, err := txscript.SignatureScript(tx, index, prevScript,
+		txscript.SigHashAll, privKey, compressed)
+	if err != nil {
+		return fmt.Errorf("txscript.SignatureScript error: %w", err)
+	}
 
-			pka, ok := address.(waddrmgr.ManagedPubKeyAddress)
-			if !ok {
-				return nil, false, fmt.Errorf("address %v is not "+
-					"a pubkey address", address.Address().EncodeAddress())
-			}
-
-			key, err := pka.PrivKey()
-			if err != nil {
-				return nil, false, err
-			}
-
-			return key, pka.Compressed(), nil
-		})
-		getScript := txscript.ScriptClosure(func(addr btcutil.Address) ([]byte, error) {
-			address, err := w.Manager.Address(addrmgrNs, addr)
-			if err != nil {
-				return nil, err
-			}
-			sa, ok := address.(waddrmgr.ManagedScriptAddress)
-			if !ok {
-				return nil, errors.New("address is not a script" +
-					" address")
-			}
-
-			return sa.Script()
-		})
-
-		script, err := txscript.SignTxOutput(wallet.chainParams,
-			tx, index, prevScript, txscript.SigHashAll, getKey,
-			getScript, in.SignatureScript)
-		if err != nil {
-			return err
-		}
-		in.SignatureScript = script
-
-		return nil
-	})
+	in.SignatureScript = sigscript
+	return nil
 }
 
 // PublishTransaction adds the transaction to the wallet and publishes

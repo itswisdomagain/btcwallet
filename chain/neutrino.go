@@ -72,8 +72,9 @@ type NeutrinoClient struct {
 }
 
 // A compile-time check to ensure that RPCClient satisfies the chain.Interface
-// interface.
+// interface and chain.MixingInterface.
 var _ Interface = (*NeutrinoClient)(nil)
+var _ MixingInterface = (*NeutrinoClient)(nil)
 
 type MixpoolBlockchain struct {
 	chainClient Interface
@@ -85,11 +86,11 @@ func NewMixpoolBlockchain(chainClient Interface, params *chaincfg.Params) *Mixpo
 }
 
 func (b *MixpoolBlockchain) CurrentTip() (chainhash.Hash, int64) {
-	bs, err := b.chainClient.BlockStamp()
+	hash, height, err := b.chainClient.GetBestBlock()
 	if err != nil {
 		return chainhash.Hash{}, 0
 	}
-	return bs.Hash, int64(bs.Height)
+	return *hash, int64(height)
 }
 
 func (b *MixpoolBlockchain) ChainParams() *chaincfg.Params {
@@ -143,9 +144,32 @@ func (s *NeutrinoClient) BackEnd() string {
 	return "neutrino"
 }
 
+func (s *NeutrinoClient) StartWithMixing(ctx context.Context, w neutrino.MixWallet) error {
+	return s.start(ctx, w)
+}
+
+func (s *NeutrinoClient) PublishMixMessages(msgs ...mixing.Message) error {
+	if cs, ok := s.CS.(MixingInterface); ok {
+		return cs.PublishMixMessages(msgs...)
+	} else {
+		return fmt.Errorf("error starting chain service: %T does not support mixing", s.CS)
+	}
+}
+
 // Start replicates the RPC client's Start method.
 func (s *NeutrinoClient) Start(ctx context.Context) error {
-	err := s.CS.Start(ctx)
+	return s.start(ctx, nil)
+}
+
+func (s *NeutrinoClient) start(ctx context.Context, w neutrino.MixWallet) error {
+	var err error
+	if w == nil {
+		err = s.CS.Start(ctx)
+	} else if cs, ok := s.CS.(MixingInterface); ok {
+		err = cs.StartWithMixing(ctx, w)
+	} else {
+		err = fmt.Errorf("error starting chain service: %T does not support mixing", s.CS)
+	}
 	if err != nil {
 		return fmt.Errorf("error starting chain service: %w", err)
 	}

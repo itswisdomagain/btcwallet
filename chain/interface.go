@@ -56,8 +56,7 @@ type Interface interface {
 }
 
 type MixingInterface interface {
-	Interface
-	StartWithMixing(mixCfg neutrino.MixWallet) error
+	StartWithMixing(ctx context.Context, w neutrino.MixWallet) error
 	PublishMixMessages(msgs ...mixing.Message) error
 }
 

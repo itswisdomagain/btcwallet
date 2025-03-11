@@ -34,16 +34,17 @@ var (
 
 // must be sorted large to small
 var splitPoints = [...]btcutil.Amount{
-	// 1 << 36, // 687.19476736
-	// 1 << 34, // 171.79869184
-	// 1 << 32, // 042.94967296
-	// 1 << 30, // 010.73741824
-	// 1 << 28, // 002.68435456
+	1 << 36, // 687.19476736
+	1 << 34, // 171.79869184
+	1 << 32, // 042.94967296
+	1 << 30, // 010.73741824
+	1 << 28, // 002.68435456
 	1 << 26, // 000.67108864
-	// 1 << 24, // 000.16777216
-	// 1 << 22, // 000.04194304
-	// 1 << 20, // 000.01048576
-	// 1 << 18, // 000.00262144
+	1 << 24, // 000.16777216
+	1 << 22, // 000.04194304
+	1 << 20, // 000.01048576
+	1 << 18, // 000.00262144
+	1 << 16, // 000.00065536 // TODO: Remove
 }
 
 func estimateSerializeSizeFromScriptSizes(inputSizes []int, outputSizes []int, changeScriptSize int) int {
@@ -51,7 +52,8 @@ func estimateSerializeSizeFromScriptSizes(inputSizes []int, outputSizes []int, c
 	for i := range outputSizes {
 		outputs[i] = wire.NewTxOut(0, make([]byte, outputSizes[i]))
 	}
-	return txsizes.EstimateSerializeSize(len(inputSizes), outputs, false)
+	addChangeOutput := changeScriptSize > 0
+	return txsizes.EstimateSerializeSize(len(inputSizes), outputs, addChangeOutput)
 }
 
 func smallestMixChange(feeRate btcutil.Amount) btcutil.Amount {
@@ -82,20 +84,20 @@ type Hash160er interface {
 
 func (w *Wallet) makeGen(account, branch uint32) mixclient.GenFunc {
 	gen := func(mcount uint32) (wire.MixVect, error) {
-		checkAddress := func(mixAddr waddrmgr.ManagedAddress) error {
-			_, ok := mixAddr.(Hash160er)
+		acceptAddress := func(mixAddr waddrmgr.ManagedAddress) bool {
+			_, ok := mixAddr.Address().(Hash160er)
 			if !ok {
-				return fmt.Errorf("address does not have Hash160 method")
+				log.Infof("address %T does not have hash160 method", mixAddr)
 			}
-			return nil
+			return ok
 		}
 
-		addresses, err := w.NewAddresses(account, branch, mcount, waddrmgr.KeyScopeBIP0044, checkAddress)
+		addresses, err := w.NewAddresses(account, branch, mcount, waddrmgr.KeyScopeBIP0044, acceptAddress)
 		if err != nil {
 			return nil, err
 		}
 
-		gen := make(wire.MixVect, 0, mcount)
+		gen := make(wire.MixVect, mcount)
 		for i := uint32(0); i < mcount; i++ {
 			hash160er := addresses[i].(Hash160er)
 			gen[i] = *hash160er.Hash160()
@@ -120,20 +122,31 @@ func dicemixExpiry(chainClient chain.Interface, chainParams *chaincfg.Params) (u
 // unlocked.
 func (w *Wallet) addCoinJoinInput(cj *mixclient.CoinJoin,
 	input *wire.TxIn, prevScript []byte, prevScriptVersion uint16, value int64) error {
+	privKey, _, privKeyDone, err := w.privateKey(prevScript)
+	if err != nil {
+		return err
+	}
 
-	const scriptVersion = 0
+	err = cj.AddInput(input, value, prevScript, prevScriptVersion, privKey)
+	privKeyDone()
+	return err
+}
+
+func (w *Wallet) privateKey(prevScript []byte) (*btcec.PrivateKey, bool, func(), error) {
 	_, addrs, _, err := txscript.ExtractPkScriptAddrs(prevScript, w.chainParams)
+	if err != nil {
+		return nil, false, nil, err
+	}
 	if len(addrs) != 1 {
-		return fmt.Errorf("previous output is not P2PKH")
+		return nil, false, nil, fmt.Errorf("previous output is not P2PKH")
 	}
 	prevP2PKH, ok := addrs[0].(*btcutil.AddressPubKeyHash)
 	if !ok {
-		return fmt.Errorf("previous output is not P2PKH")
+		return nil, false, nil, fmt.Errorf("previous output is not P2PKH")
 	}
 
+	var compressed bool
 	var privKey *btcec.PrivateKey
-	var privKeyDone func()
-
 	err = walletdb.View(w.db, func(tx walletdb.ReadTx) error {
 		addrmgrNs := tx.ReadBucket(waddrmgrNamespaceKey)
 		ma, err := w.Manager.Address(addrmgrNs, prevP2PKH)
@@ -147,20 +160,18 @@ func (w *Wallet) addCoinJoinInput(cj *mixclient.CoinJoin,
 			return fmt.Errorf("no privkey found for address")
 		}
 
+		compressed = pka.Compressed()
 		privKey, err = pka.PrivKey()
-		privKeyDone = privKey.Zero
 		return err
 	})
 	if err != nil {
-		if privKeyDone != nil {
-			privKeyDone()
+		if privKey != nil {
+			privKey.Zero()
 		}
-		return err
+		return nil, false, nil, err
 	}
 
-	err = cj.AddInput(input, value, prevScript, prevScriptVersion, privKey)
-	privKeyDone()
-	return err
+	return privKey, compressed, privKey.Zero, nil
 }
 
 // MixOutput performs a mix of a single output into standard sized outputs
@@ -344,8 +355,7 @@ func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount,
 
 	// Mixing requests require wallet mixing support.
 	if !w.mixing {
-		s := "wallet mixing support is disabled"
-		return fmt.Errorf("wallet.MixAccount: %s", s)
+		return fmt.Errorf("wallet.MixAccount: wallet mixing support is disabled")
 	}
 
 	chainClient, err := w.requireChainClient()
@@ -359,7 +369,6 @@ func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount,
 		return err
 	}
 
-	w.lockedOutpointsMtx.Lock()
 	var credits []wtxmgr.Credit
 	err = walletdb.View(w.db, func(dbtx walletdb.ReadTx) error {
 		var minAmount = splitPoints[len(splitPoints)-1]
@@ -382,10 +391,8 @@ func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount,
 		return err
 	})
 	if err != nil {
-		w.lockedOutpointsMtx.Unlock()
 		return fmt.Errorf("wallet.MixAccount: %w", err)
 	}
-	w.lockedOutpointsMtx.Unlock()
 
 	var g errgroup.Group
 	for i := range credits {

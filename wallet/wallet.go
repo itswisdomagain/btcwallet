@@ -260,11 +260,23 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 const mixSplitLimit = 10
 
 func (w *Wallet) InitMixing(mixPool *mixpool.Pool, mixcLog btclog.Logger) {
-	w.mixing = mixPool != nil
-	w.mixpool = mixPool
-	w.mixSems = newMixSemaphores(mixSplitLimit)
-	w.mixClient = mixclient.NewClient((*mixingWallet)(w))
-	w.mixClient.SetLogger(mixcLog)
+	if mixPool != nil {
+		w.mixing = true
+		w.mixpool = mixPool
+		w.mixSems = newMixSemaphores(mixSplitLimit)
+		w.mixClient = mixclient.NewClient((*mixingWallet)(w))
+		w.mixClient.SetLogger(mixcLog)
+	}
+}
+
+func (w *Wallet) StartMixer() {
+	if w.mixing && w.stopMixClient == nil {
+		// TODO: Use ctx that is canceled on wallet stop. Actually,
+		// this ctx is such. Consider using in wallet.MixAccount.
+		ctx, cancel := context.WithCancel(context.Background())
+		w.stopMixClient = cancel
+		go w.mixClient.Run(ctx)
+	}
 }
 
 // requireChainClient marks that a wallet method can only be completed when the
@@ -312,8 +324,9 @@ func (w *Wallet) Stop() {
 	select {
 	case <-quit:
 	default:
-		if w.mixing {
+		if w.stopMixClient != nil {
 			w.stopMixClient()
+			w.stopMixClient = nil
 		}
 		close(quit)
 		w.chainClientLock.Lock()
@@ -3262,7 +3275,7 @@ func (w *Wallet) SortedActivePaymentAddresses() ([]string, error) {
 // NewAddresses returns the specified number of next chained addresses for a
 // wallet.
 func (w *Wallet) NewAddresses(account, branch, numAddresses uint32,
-	scope waddrmgr.KeyScope, checkAddress func(waddrmgr.ManagedAddress) error) ([]btcutil.Address, error) {
+	scope waddrmgr.KeyScope, acceptAddress func(waddrmgr.ManagedAddress) bool) ([]btcutil.Address, error) {
 
 	chainClient, err := w.requireChainClient()
 	if err != nil {
@@ -3291,7 +3304,7 @@ func (w *Wallet) NewAddresses(account, branch, numAddresses uint32,
 
 		// Get next addresses from wallet.
 		addrmgrNs := tx.ReadWriteBucket(waddrmgrNamespaceKey)
-		addrs, err := manager.NextAddresses(addrmgrNs, account, branch, numAddresses, checkAddress)
+		addrs, err := manager.NextAddresses(addrmgrNs, account, branch, numAddresses, acceptAddress)
 		if err != nil {
 			return err
 		}

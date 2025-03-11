@@ -1005,7 +1005,7 @@ func (s *ScopedKeyManager) accountAddrType(acctInfo *accountInfo,
 //
 // This function MUST be called with the manager lock held for writes.
 func (s *ScopedKeyManager) nextAddresses(ns walletdb.ReadWriteBucket,
-	account uint32, numAddresses uint32, internal bool, checkAddress func(ManagedAddress) error) ([]ManagedAddress,
+	account uint32, numAddresses uint32, internal bool, acceptAddress func(ManagedAddress) bool) ([]ManagedAddress,
 	error) {
 
 	// The next address can only be generated for accounts that have
@@ -1111,8 +1111,10 @@ func (s *ScopedKeyManager) nextAddresses(ns walletdb.ReadWriteBucket,
 		managedAddr := addr
 		nextKey.Zero()
 
-		if err = checkAddress(managedAddr); err != nil {
-			return nil, err
+		if acceptAddress != nil {
+			if ok := acceptAddress(managedAddr); !ok {
+				continue
+			}
 		}
 
 		info := unlockDeriveInfo{
@@ -1451,7 +1453,7 @@ func (s *ScopedKeyManager) NextInternalAddresses(ns walletdb.ReadWriteBucket,
 // that are intended for internal use such as change from the address manager.
 func (s *ScopedKeyManager) NextAddresses(ns walletdb.ReadWriteBucket,
 	account, branch uint32, numAddresses uint32,
-	checkAddress func(ManagedAddress) error) ([]ManagedAddress, error) {
+	acceptAddress func(ManagedAddress) bool) ([]ManagedAddress, error) {
 
 	// Enforce maximum account number.
 	if account > MaxAccountNum {
@@ -1469,7 +1471,7 @@ func (s *ScopedKeyManager) NextAddresses(ns walletdb.ReadWriteBucket,
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	return s.nextAddresses(ns, account, numAddresses, internal, checkAddress)
+	return s.nextAddresses(ns, account, numAddresses, internal, acceptAddress)
 }
 
 // ExtendExternalAddresses ensures that all valid external keys through

@@ -6,7 +6,6 @@ package wallet
 
 import (
 	"bytes"
-	"context"
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -159,13 +158,6 @@ func (w *Wallet) handleChainNotifications() {
 					return
 				}
 
-				// Start the mix client background process.
-				if w.mixing {
-					ctx, cancel := context.WithCancel(context.Background())
-					w.stopMixClient = cancel
-					go w.mixClient.Run(ctx)
-				}
-
 			case chain.BlockConnected:
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 					return w.connectBlock(tx, wtxmgr.BlockMeta(n))
@@ -212,7 +204,11 @@ func (w *Wallet) handleChainNotifications() {
 			case *chain.RescanFinished:
 				err = catchUpHashes(w, chainClient, n.Height)
 				notificationName = "rescan finished"
+				wasSynced := w.ChainSynced()
 				w.SetChainSynced(true)
+				if !wasSynced {
+					w.StartMixer()
+				}
 				select {
 				case w.rescanNotifications <- n:
 				case <-w.quitChan():
