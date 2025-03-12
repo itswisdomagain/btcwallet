@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	_ "net/http/pprof" // nolint:gosec
@@ -18,6 +19,7 @@ import (
 	"github.com/btcsuite/btcwallet/build"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/rpc/legacyrpc"
+	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wallet"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightninglabs/neutrino"
@@ -75,6 +77,23 @@ func walletMain() error {
 		activeNet.Params, dbDir, true, cfg.DBTimeout, 250, cfg.Mixing,
 	)
 
+	// Stop any services started by the loader after the shutdown procedure is
+	// initialized and this function returns.
+	defer func() {
+		// When panicing, do not cleanly unload the wallet (by closing
+		// the db).  If a panic occurred inside a bolt transaction, the
+		// db mutex is still held and this causes a deadlock.
+		if r := recover(); r != nil {
+			panic(r)
+		}
+		err := loader.UnloadWallet()
+		if err != nil && !errors.Is(err, wallet.ErrNotLoaded) {
+			log.Errorf("Failed to close wallet: %v", err)
+		} else if err == nil {
+			log.Infof("Closed wallet")
+		}
+	}()
+
 	// Create and start HTTP server to serve wallet client connections.
 	// This will be updated with the wallet and chain server RPC client
 	// created below after each is created.
@@ -86,9 +105,9 @@ func walletMain() error {
 
 	// Create and start chain RPC client so it's ready to connect to
 	// the wallet when loaded later.
-	if !cfg.NoInitialLoad {
-		go rpcClientConnectLoop(legacyRPCServer, loader)
-	}
+	// if !cfg.NoInitialLoad {
+	// 	go rpcClientConnectLoop(legacyRPCServer, loader)
+	// }
 
 	loader.RunAfterLoad(func(w *wallet.Wallet) {
 		startWalletRPCServices(w, rpcs, legacyRPCServer)
@@ -101,6 +120,60 @@ func walletMain() error {
 		if err != nil {
 			log.Error(err)
 			return err
+		}
+
+		w, _ := loader.LoadedWallet()
+		if cfg.Pass != "" {
+			err = w.Unlock([]byte(cfg.Pass), nil)
+			if err != nil {
+				log.Errorf("Incorrect passphrase in pass config setting.")
+				return err
+			}
+		} else {
+			_ = startPromptPass(w)
+		}
+
+		// Create and start chain RPC client _after_ prompting for password, if
+		// necessary. Doing this sooner may cause chain logs to hinder the
+		// password prompt process.
+		go rpcClientConnectLoop(legacyRPCServer, loader)
+
+		if cfg.MixChange {
+			// Validate mix accounts now that the wallet has been loaded.
+			var err error
+			var lastFlag, lastLookup string
+			lookup := func(flag, name string) (account uint32) {
+				if err == nil {
+					lastFlag = flag
+					lastLookup = name
+					account, err = w.AccountNumber(waddrmgr.KeyScopeBIP0044, name)
+					var mErr waddrmgr.ManagerError
+					if errors.As(err, &mErr) && mErr.ErrorCode == waddrmgr.ErrAccountNotFound {
+						log.Infof("%s: account %q does not exist; creating...", flag, name)
+						account, err = w.NextAccount(waddrmgr.KeyScopeBIP0044, name)
+					}
+				}
+				return
+			}
+			mixedAccount := lookup("mixedaccount", cfg.mixedAccount)
+			changeAccount := lookup("changeaccount", cfg.ChangeAccount)
+
+			// Check if any of the above calls to lookup() have failed.
+			if err != nil {
+				log.Errorf("%s: error looking up account %q: %v", lastFlag, lastLookup, err)
+				return err
+			}
+
+			log.Infof("Starting automixer")
+			automixerdone := make(chan struct{})
+			go func() {
+				err := w.StartAutoMixer(changeAccount, mixedAccount, cfg.mixedBranch, cfg.RelayFee.Amount)
+				if err != nil && !w.ShuttingDown() {
+					log.Errorf("automixer ended: %v", err)
+				}
+				automixerdone <- struct{}{}
+			}()
+			defer func() { <-automixerdone }()
 		}
 	}
 

@@ -24,6 +24,7 @@ import (
 	"github.com/btcsuite/btcwallet/internal/legacy/keystore"
 	"github.com/btcsuite/btcwallet/netparams"
 	"github.com/btcsuite/btcwallet/wallet"
+	"github.com/btcsuite/btcwallet/wallet/txrules"
 	flags "github.com/jessevdk/go-flags"
 	"github.com/lightninglabs/neutrino"
 )
@@ -70,6 +71,8 @@ type config struct {
 
 	// Wallet options
 	WalletPass string `long:"walletpass" default-mask:"-" description:"The public wallet password -- Only required if the wallet was created with one"`
+	PromptPass bool   `long:"promptpass" description:"Prompt for private passphase from terminal and unlock without timeout"`
+	Pass       string `long:"pass" description:"Unlock with private passphrase"`
 
 	// RPC client options
 	RPCConnect       string                  `short:"c" long:"rpcconnect" description:"Hostname/IP and port of btcd RPC server to connect to (default localhost:8334, testnet: localhost:18334, testnet4: localhost:48334, simnet: localhost:18556, regtest: localhost:18334)"`
@@ -116,8 +119,14 @@ type config struct {
 	// Deprecated options
 	DataDir *cfgutil.ExplicitString `short:"b" long:"datadir" default-mask:"-" description:"DEPRECATED -- use appdata instead"`
 
-	Mixing     bool                    `long:"mixing" description:"Enable mixing support"`
-	CSPPSolver *cfgutil.ExplicitString `long:"csppsolver" description:"Path to CSPP solver executable (if not in PATH)"`
+	Mixing        bool                    `long:"mixing" description:"Enable mixing support"`
+	CSPPSolver    *cfgutil.ExplicitString `long:"csppsolver" description:"Path to CSPP solver executable (if not in PATH)"`
+	RelayFee      *cfgutil.AmountFlag     `long:"txfee" description:"Transaction fee per kilobyte (for mix transactions)"`
+	MixedAccount  string                  `long:"mixedaccount" description:"Account/branch used to derive CoinShuffle++ mixed outputs"`
+	mixedAccount  string
+	mixedBranch   uint32
+	ChangeAccount string `long:"changeaccount" description:"Account used to derive unmixed CoinJoin outputs in CoinShuffle++ protocol"`
+	MixChange     bool   `long:"mixchange" description:"Use CoinShuffle++ to mix change account outputs into mix account"`
 }
 
 // cleanAndExpandPath expands environement variables and leading ~ in the
@@ -287,6 +296,7 @@ func loadConfig() (*config, []string, error) {
 		BanThreshold:           neutrino.BanThreshold,
 		DBTimeout:              wallet.DefaultDBTimeout,
 		CSPPSolver:             cfgutil.NewExplicitString(solverrpc.SolverProcess),
+		RelayFee:               cfgutil.NewAmountFlag(txrules.DefaultRelayFeePerKb),
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -734,6 +744,27 @@ func loadConfig() (*config, []string, error) {
 	if solverMustWork {
 		if err := testStartedSolverWorks(); err != nil {
 			err := fmt.Errorf("csppsolver process is not operating properly: %v", err)
+			fmt.Fprintln(os.Stderr, err)
+			return nil, nil, err
+		}
+	}
+
+	// Parse mixedaccount account/branch
+	if cfg.MixedAccount != "" {
+		indexSlash := strings.LastIndex(cfg.MixedAccount, "/")
+		if indexSlash == -1 {
+			err := fmt.Errorf("--mixedaccount must have form 'accountname/branch'")
+			fmt.Fprintln(os.Stderr, err)
+			return nil, nil, err
+		}
+		cfg.mixedAccount = cfg.MixedAccount[:indexSlash]
+		switch cfg.MixedAccount[indexSlash+1:] {
+		case "0":
+			cfg.mixedBranch = 0
+		case "1":
+			cfg.mixedBranch = 1
+		default:
+			err := fmt.Errorf("--mixedaccount branch must be 0 or 1")
 			fmt.Fprintln(os.Stderr, err)
 			return nil, nil, err
 		}

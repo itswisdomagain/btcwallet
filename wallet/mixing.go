@@ -176,7 +176,9 @@ func (w *Wallet) privateKey(prevScript []byte) (*btcec.PrivateKey, bool, func(),
 
 // MixOutput performs a mix of a single output into standard sized outputs
 // under the current ticket price.
-func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mixBranch uint32) error {
+func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mixBranch uint32,
+	feeRate btcutil.Amount) error {
+
 	makeError := func(s string, values ...interface{}) error {
 		values = append([]any{output}, values...)
 		return fmt.Errorf("wallet.MixOutput(%v): "+s, values...)
@@ -229,7 +231,6 @@ func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mix
 	var i int
 	var count uint32
 	var mixValue, remValue, changeValue btcutil.Amount
-	var feeRate = btcutil.Amount(1e4) // TODO
 	var smallestMixChange = smallestMixChange(feeRate)
 SplitPoints:
 	for i = 0; i < len(splitPoints); i++ {
@@ -285,15 +286,17 @@ SplitPoints:
 		return makeError("output %v (%v): %w", output, amount, errNoSplitDenomination)
 	}
 	select {
-	// Indicate that we're about to start up a new mix connection for the split
-	// amount at splitPoints[i]. There is a maximum number of connections
-	// allowed per amount which is equal to the channel capacity for each split
-	// amount. When the channel becomes full (too many active split requests for
-	// an amount), this will block (until a previous connection/request ends)
-	// and this method will return errThrottledMixRequest. If the channel is
-	// able to accept a new value however, register a defer fn to remove the
-	// value once this method returns.
+	case <-w.quitChan():
+		return fmt.Errorf("wallet is shutting down or has shut down")
 	case w.mixSems.splitSems[i] <- struct{}{}:
+		// Indicate that we're about to start up a new mix connection for the split
+		// amount at splitPoints[i]. There is a maximum number of connections
+		// allowed per amount which is equal to the channel capacity for each split
+		// amount. When the channel becomes full (too many active split requests for
+		// an amount), this will block (until a previous connection/request ends)
+		// and this method will return errThrottledMixRequest. If the channel is
+		// able to accept a new value however, register a defer fn to remove the
+		// value once this method returns.
 		defer func() { <-w.mixSems.splitSems[i] }()
 	default:
 		return errThrottledMixRequest
@@ -350,9 +353,7 @@ SplitPoints:
 //
 // Due to performance concerns of timing out in a CoinShuffle++ run, this
 // function may throttle how many of the outputs are mixed each call.
-func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount,
-	mixBranch uint32) error {
-
+func (w *Wallet) MixAccount(changeAccount, mixAccount, mixBranch uint32, feeRate btcutil.Amount) error {
 	// Mixing requests require wallet mixing support.
 	if !w.mixing {
 		return fmt.Errorf("wallet.MixAccount: wallet mixing support is disabled")
@@ -398,7 +399,7 @@ func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount,
 	for i := range credits {
 		op := &credits[i].OutPoint
 		g.Go(func() error {
-			err := w.MixOutput(op, changeAccount, mixAccount, mixBranch)
+			err := w.MixOutput(op, changeAccount, mixAccount, mixBranch, feeRate)
 			if errors.Is(err, errThrottledMixRequest) {
 				return nil
 			}
@@ -416,4 +417,35 @@ func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount,
 		return fmt.Errorf("wallet.MixAccount: %w", err)
 	}
 	return nil
+}
+
+func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, feeRate btcutil.Amount) error {
+	c := w.NtfnServer.TransactionNotifications()
+	defer c.Done()
+
+	for {
+		select {
+		case <-w.quitChan():
+			return fmt.Errorf("wallet is shutting down or has shut down")
+		case n := <-c.C:
+			if len(n.AttachedBlocks) == 0 {
+				continue
+			}
+
+			// Don't perform any actions while transactions are not synced through
+			// the tip block.
+			// TODO: w.ChainSynced() isn't really reliable.
+			if !w.ChainSynced() {
+				log.Debugf("Skipping automixer actions: transactions are not synced")
+				continue
+			}
+
+			go func() {
+				err := w.MixAccount(changeAccount, mixAccount, mixBranch, feeRate)
+				if err != nil {
+					log.Error(err)
+				}
+			}()
+		}
+	}
 }
