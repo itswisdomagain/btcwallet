@@ -168,10 +168,11 @@ type Wallet struct {
 	NtfnServer *NotificationServer
 
 	// Mixing
-	mixing        bool
+	mixingEnabled bool
 	mixpool       *mixpool.Pool
 	mixSems       mixSemaphores
 	mixClient     *mixclient.Client
+	mixCtx        context.Context
 	stopMixClient context.CancelFunc
 
 	chainParams *chaincfg.Params
@@ -261,7 +262,7 @@ const mixSplitLimit = 10
 
 func (w *Wallet) InitMixing(mixPool *mixpool.Pool, mixcLog btclog.Logger) {
 	if mixPool != nil {
-		w.mixing = true
+		w.mixingEnabled = true
 		w.mixpool = mixPool
 		w.mixSems = newMixSemaphores(mixSplitLimit)
 		w.mixClient = mixclient.NewClient((*mixingWallet)(w))
@@ -270,12 +271,9 @@ func (w *Wallet) InitMixing(mixPool *mixpool.Pool, mixcLog btclog.Logger) {
 }
 
 func (w *Wallet) StartMixer() {
-	if w.mixing && w.stopMixClient == nil {
-		// TODO: Use ctx that is canceled on wallet stop. Actually,
-		// this ctx is such. Consider using in wallet.MixAccount.
-		ctx, cancel := context.WithCancel(context.Background())
-		w.stopMixClient = cancel
-		go w.mixClient.Run(ctx)
+	if w.mixingEnabled && w.stopMixClient == nil {
+		w.mixCtx, w.stopMixClient = context.WithCancel(context.Background())
+		go w.mixClient.Run(w.mixCtx)
 	}
 }
 

@@ -15,6 +15,7 @@ require (
 	github.com/btcsuite/btcwallet/wtxmgr v1.5.6
 	github.com/btcsuite/websocket v0.0.0-20150119174127-31079b680792
 	github.com/davecgh/go-spew v1.1.1
+	github.com/decred/dcrd/crypto/ripemd160 v1.0.2
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/decred/dcrd/mixing v0.7.3
 	github.com/decred/go-socks v1.1.0

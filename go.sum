@@ -59,6 +59,7 @@ github.com/decred/dcrd/crypto/blake256 v1.1.0 h1:zPMNGQCm0g4QTY27fOCorQW7EryeQ/U
 github.com/decred/dcrd/crypto/blake256 v1.1.0/go.mod h1:2OfgNZ5wDpcsFmHmCK5gZTPcCXqlm2ArzUIkw9czNJo=
 github.com/decred/dcrd/crypto/rand v1.0.1 h1:pYMgDRmRv1z1RNgAAs8izJstm4B+fLFiqGD5btOt2Wg=
 github.com/decred/dcrd/crypto/rand v1.0.1/go.mod h1:MsA2XySk/4KpCOYW6vsNYTGuOYRK1wpvulaWCuW7RyI=
+github.com/decred/dcrd/crypto/ripemd160 v1.0.2 h1:TvGTmUBHDU75OHro9ojPLK+Yv7gDl2hnUvRocRCjsys=
 github.com/decred/dcrd/crypto/ripemd160 v1.0.2/go.mod h1:uGfjDyePSpa75cSQLzNdVmWlbQMBuiJkvXw/MNKRY4M=
 github.com/decred/dcrd/dcrec v1.0.1/go.mod h1:CO+EJd8eHFb8WHa84C7ZBkXsNUIywaTHb+UAuI5uo6o=
 github.com/decred/dcrd/dcrec/edwards/v2 v2.0.3/go.mod h1:AKpV6+wZ2MfPRJnTbQ6NPgWrKzbe9RCIlCF/FKzMtM8=

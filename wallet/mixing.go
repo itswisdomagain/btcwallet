@@ -12,8 +12,10 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/mixing/mixclient"
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/chain"
@@ -22,59 +24,10 @@ import (
 	"github.com/btcsuite/btcwallet/wallet/txsizes"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/decred/dcrd/crypto/ripemd160"
 	"github.com/decred/go-socks/socks"
-	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/sync/errgroup"
 )
-
-var (
-	errNoSplitDenomination = errors.New("no suitable split denomination")
-	errThrottledMixRequest = errors.New("throttled mix request for split denomination")
-)
-
-// must be sorted large to small
-var splitPoints = [...]btcutil.Amount{
-	1 << 36, // 687.19476736
-	1 << 34, // 171.79869184
-	1 << 32, // 042.94967296
-	1 << 30, // 010.73741824
-	1 << 28, // 002.68435456
-	1 << 26, // 000.67108864
-	1 << 24, // 000.16777216
-	1 << 22, // 000.04194304
-	1 << 20, // 000.01048576
-	1 << 18, // 000.00262144
-	1 << 16, // 000.00065536 // TODO: Remove
-}
-
-func estimateSerializeSizeFromScriptSizes(inputSizes []int, outputSizes []int, changeScriptSize int) int {
-	outputs := make([]*wire.TxOut, len(outputSizes))
-	for i := range outputSizes {
-		outputs[i] = wire.NewTxOut(0, make([]byte, outputSizes[i]))
-	}
-	addChangeOutput := changeScriptSize > 0
-	return txsizes.EstimateSerializeSize(len(inputSizes), outputs, addChangeOutput)
-}
-
-func smallestMixChange(feeRate btcutil.Amount) btcutil.Amount {
-	inScriptSizes := []int{txsizes.RedeemP2PKHSigScriptSize}
-	outScriptSizes := []int{txsizes.P2PKHPkScriptSize}
-	size := estimateSerializeSizeFromScriptSizes(inScriptSizes, outScriptSizes, 0)
-	fee := txrules.FeeForSerializeSize(feeRate, size)
-	return fee + splitPoints[len(splitPoints)-1]
-}
-
-type mixSemaphores struct {
-	splitSems [len(splitPoints)]chan struct{}
-}
-
-func newMixSemaphores(n int) mixSemaphores {
-	var m mixSemaphores
-	for i := range m.splitSems {
-		m.splitSems[i] = make(chan struct{}, n)
-	}
-	return m
-}
 
 // Hash160er is an interface that allows the RIPEMD-160 hash to be obtained from
 // addresses that involve them.
@@ -106,6 +59,99 @@ func (w *Wallet) makeGen(account, branch uint32) mixclient.GenFunc {
 		return gen, nil
 	}
 	return mixclient.GenFunc(gen)
+}
+
+// mixingWallet implements the mixclient.Wallet interface.
+type mixingWallet Wallet
+
+// BestBlock returns the wallet's current best tip block height and hash.
+func (w *mixingWallet) BestBlock() (uint32, chainhash.Hash) {
+	wallet := (*Wallet)(w)
+	chainClient, err := wallet.requireChainClient()
+	if err != nil {
+		return 0, chainhash.Hash{}
+	}
+	hash, height, err := chainClient.GetBestBlock()
+	if err != nil {
+		return 0, chainhash.Hash{}
+	}
+	return uint32(height), *hash
+}
+
+// Mixpool returns access to the wallet's mixing message pool.
+//
+// The mixpool should only be used for message access and deletion,
+// but never publishing; SubmitMixMessage must be used instead for
+// message publishing.
+func (w *mixingWallet) Mixpool() *mixpool.Pool {
+	wallet := (*Wallet)(w)
+	return wallet.mixpool
+}
+
+// SubmitMixMessage submits a mixing message to the wallet's mixpool
+// and broadcasts it to the network.
+func (w *mixingWallet) SubmitMixMessage(ctx context.Context, msg mixing.Message) (err error) {
+	wallet := (*Wallet)(w)
+
+	cc, err := wallet.requireChainClient()
+	if err != nil {
+		return err
+	}
+
+	chainClient, ok := cc.(chain.MixingInterface)
+	if !ok {
+		return fmt.Errorf("wallet backend does not support mixing")
+	}
+
+	defer func() {
+		if err != nil {
+			wallet.mixpool.RemoveMessage(msg)
+		}
+	}()
+
+	_, err = wallet.mixpool.AcceptMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	return chainClient.PublishMixMessages(msg)
+}
+
+// SignInput adds a signature script to a transaction input.
+func (w *mixingWallet) SignInput(tx *wire.MsgTx, index int, prevScript []byte) error {
+	wallet := (*Wallet)(w)
+	in := tx.TxIn[index]
+
+	privKey, compressed, privKeyDone, err := wallet.privateKey(prevScript)
+	if err != nil {
+		return err
+	}
+
+	defer privKeyDone()
+	sigscript, err := txscript.SignatureScript(tx, index, prevScript,
+		txscript.SigHashAll, privKey, compressed)
+	if err != nil {
+		return fmt.Errorf("txscript.SignatureScript error: %w", err)
+	}
+
+	in.SignatureScript = sigscript
+	return nil
+}
+
+// PublishTransaction adds the transaction to the wallet and publishes
+// it to the network.
+func (w *mixingWallet) PublishTransaction(ctx context.Context, tx *wire.MsgTx) error {
+	wallet := (*Wallet)(w)
+	chainClient, err := wallet.requireChainClient()
+	if err != nil {
+		return err
+	}
+
+	_, err = chainClient.SendRawTransaction(tx, true) // TODO: allowHighFees?
+	if err != nil {
+		log.Errorf("Failed to publish mix transaction: %v", err)
+	}
+	return err
 }
 
 func dicemixExpiry(chainClient chain.Interface, chainParams *chaincfg.Params) (uint32, error) {
@@ -174,6 +220,54 @@ func (w *Wallet) privateKey(prevScript []byte) (*btcec.PrivateKey, bool, func(),
 	return privKey, compressed, privKey.Zero, nil
 }
 
+// must be sorted large to small
+var splitPoints = [...]btcutil.Amount{
+	1 << 36, // 687.19476736
+	1 << 34, // 171.79869184
+	1 << 32, // 042.94967296
+	1 << 30, // 010.73741824
+	1 << 28, // 002.68435456
+	1 << 26, // 000.67108864
+	1 << 24, // 000.16777216
+	1 << 22, // 000.04194304
+	1 << 20, // 000.01048576
+	1 << 18, // 000.00262144
+}
+
+func estimateSerializeSizeFromScriptSizes(inputSizes []int, outputSizes []int, changeScriptSize int) int {
+	outputs := make([]*wire.TxOut, len(outputSizes))
+	for i := range outputSizes {
+		outputs[i] = wire.NewTxOut(0, make([]byte, outputSizes[i]))
+	}
+	addChangeOutput := changeScriptSize > 0
+	return txsizes.EstimateSerializeSize(len(inputSizes), outputs, addChangeOutput)
+}
+
+func smallestMixChange(feeRate btcutil.Amount) btcutil.Amount {
+	inScriptSizes := []int{txsizes.RedeemP2PKHSigScriptSize}
+	outScriptSizes := []int{txsizes.P2PKHPkScriptSize}
+	size := estimateSerializeSizeFromScriptSizes(inScriptSizes, outScriptSizes, 0)
+	fee := txrules.FeeForSerializeSize(feeRate, size)
+	return fee + splitPoints[len(splitPoints)-1]
+}
+
+type mixSemaphores struct {
+	splitSems [len(splitPoints)]chan struct{}
+}
+
+func newMixSemaphores(n int) mixSemaphores {
+	var m mixSemaphores
+	for i := range m.splitSems {
+		m.splitSems[i] = make(chan struct{}, n)
+	}
+	return m
+}
+
+var (
+	errNoSplitDenomination = errors.New("no suitable split denomination")
+	errThrottledMixRequest = errors.New("throttled mix request for split denomination")
+)
+
 // MixOutput performs a mix of a single output into standard sized outputs
 // under the current ticket price.
 func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mixBranch uint32,
@@ -185,7 +279,7 @@ func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mix
 	}
 
 	// Mixing requests require wallet mixing support.
-	if !w.mixing {
+	if !w.mixingEnabled {
 		return makeError("wallet mixing support is disabled")
 	}
 
@@ -237,10 +331,7 @@ SplitPoints:
 		last := i == len(splitPoints)-1
 		mixValue = splitPoints[i]
 
-		count = uint32(amount / mixValue)
-		if count > 4 {
-			count = 4
-		}
+		count = min(uint32(amount/mixValue), 4)
 		for ; count > 0; count-- {
 			remValue = amount - btcutil.Amount(count)*mixValue
 			if remValue < 0 {
@@ -289,14 +380,6 @@ SplitPoints:
 	case <-w.quitChan():
 		return fmt.Errorf("wallet is shutting down or has shut down")
 	case w.mixSems.splitSems[i] <- struct{}{}:
-		// Indicate that we're about to start up a new mix connection for the split
-		// amount at splitPoints[i]. There is a maximum number of connections
-		// allowed per amount which is equal to the channel capacity for each split
-		// amount. When the channel becomes full (too many active split requests for
-		// an amount), this will block (until a previous connection/request ends)
-		// and this method will return errThrottledMixRequest. If the channel is
-		// able to accept a new value however, register a defer fn to remove the
-		// value once this method returns.
 		defer func() { <-w.mixSems.splitSems[i] }()
 	default:
 		return errThrottledMixRequest
@@ -336,8 +419,7 @@ SplitPoints:
 		return makeError("addCoinJoinInput error: %w", err)
 	}
 
-	// TODO: Get a ctx that is canceled when the wallet is about to be shutdown.
-	err = w.mixClient.Dicemix(context.TODO(), cj)
+	err = w.mixClient.Dicemix(w.mixCtx, cj)
 	if err != nil {
 		return makeError("mixClient.Dicemix error: %w", err)
 	}
@@ -355,7 +437,7 @@ SplitPoints:
 // function may throttle how many of the outputs are mixed each call.
 func (w *Wallet) MixAccount(changeAccount, mixAccount, mixBranch uint32, feeRate btcutil.Amount) error {
 	// Mixing requests require wallet mixing support.
-	if !w.mixing {
+	if !w.mixingEnabled {
 		return fmt.Errorf("wallet.MixAccount: wallet mixing support is disabled")
 	}
 
