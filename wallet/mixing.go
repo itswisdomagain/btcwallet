@@ -222,16 +222,12 @@ func (w *Wallet) privateKey(prevScript []byte) (*btcec.PrivateKey, bool, func(),
 
 // must be sorted large to small
 var splitPoints = [...]btcutil.Amount{
-	1 << 36, // 687.19476736
-	1 << 34, // 171.79869184
-	1 << 32, // 042.94967296
-	1 << 30, // 010.73741824
-	1 << 28, // 002.68435456
-	1 << 26, // 000.67108864
-	1 << 24, // 000.16777216
-	1 << 22, // 000.04194304
 	1 << 20, // 000.01048576
 	1 << 18, // 000.00262144
+	1 << 16, // 000.00065536
+	1 << 14, // 000.00016384
+	1 << 12, // 000.00004096
+	1 << 10, // 000.00001024
 }
 
 func estimateSerializeSizeFromScriptSizes(inputSizes []int, outputSizes []int, changeScriptSize int) int {
