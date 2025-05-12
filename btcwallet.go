@@ -164,16 +164,29 @@ func walletMain() error {
 				return err
 			}
 
+			// Initialize the feeoracle tool.
+			certs, _ := os.ReadFile(cfg.CAFile.Value) // ignore error
+			feeOracle, err := initFeeOracle(cfg.RPCConnect, cfg.BtcdUsername, cfg.BtcdPassword, certs, cfg.DisableClientTLS)
+			if err != nil {
+				log.Errorf("error initializing fee oracle: %v", err)
+				return err
+			}
+
 			log.Infof("Starting automixer")
 			automixerdone := make(chan struct{})
 			go func() {
-				err := w.StartAutoMixer(changeAccount, mixedAccount, cfg.mixedBranch, cfg.RelayFee.Amount)
+				err := w.StartAutoMixer(changeAccount, mixedAccount, cfg.mixedBranch,
+					feeOracle.RecommendedFeeRate, cfg.MaxFeeRate.Amount)
 				if err != nil && !w.ShuttingDown() {
 					log.Errorf("automixer ended: %v", err)
 				}
 				automixerdone <- struct{}{}
 			}()
-			defer func() { <-automixerdone }()
+
+			defer func() {
+				<-automixerdone
+				feeOracle.rpcClient.Shutdown()
+			}()
 		}
 	}
 

@@ -37,6 +37,7 @@ const (
 	defaultLogFilename      = "btcwallet.log"
 	defaultRPCMaxClients    = 10
 	defaultRPCMaxWebsockets = 25
+	defaultMaxFeeRate       = txrules.DefaultRelayFeePerKb * 5
 )
 
 var (
@@ -121,7 +122,7 @@ type config struct {
 
 	Mixing        bool                    `long:"mixing" description:"Enable mixing support"`
 	CSPPSolver    *cfgutil.ExplicitString `long:"csppsolver" description:"Path to CSPP solver executable (if not in PATH)"`
-	RelayFee      *cfgutil.AmountFlag     `long:"txfee" description:"Transaction fee per kilobyte (for mix transactions)"`
+	MaxFeeRate    *cfgutil.AmountFlag     `long:"maxfeerate" description:"Max tx fee per kilobyte (for mix transactions)"`
 	MixedAccount  string                  `long:"mixedaccount" description:"Account/branch used to derive CoinShuffle++ mixed outputs"`
 	mixedAccount  string
 	mixedBranch   uint32
@@ -296,7 +297,7 @@ func loadConfig() (*config, []string, error) {
 		BanThreshold:           neutrino.BanThreshold,
 		DBTimeout:              wallet.DefaultDBTimeout,
 		CSPPSolver:             cfgutil.NewExplicitString(solverrpc.SolverProcess),
-		RelayFee:               cfgutil.NewAmountFlag(txrules.DefaultRelayFeePerKb),
+		MaxFeeRate:             cfgutil.NewAmountFlag(defaultMaxFeeRate),
 	}
 
 	// Pre-parse the command line options to see if an alternative config

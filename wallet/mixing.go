@@ -497,7 +497,7 @@ func (w *Wallet) MixAccount(changeAccount, mixAccount, mixBranch uint32, feeRate
 	return nil
 }
 
-func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, feeRate btcutil.Amount) error {
+func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, fetchFeeRate func() (btcutil.Amount, error), maxFeeRate btcutil.Amount) error {
 	c := w.NtfnServer.TransactionNotifications()
 	defer c.Done()
 
@@ -519,7 +519,20 @@ func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, fee
 			}
 
 			go func() {
-				err := w.MixAccount(changeAccount, mixAccount, mixBranch, feeRate)
+				// Fetch a fee rate to use from oracle.
+				feeRate, err := fetchFeeRate()
+				if err != nil {
+					log.Errorf("Skipping automixer actions: cannot fetch fee rate: %v", err)
+					return
+				}
+
+				if feeRate > maxFeeRate {
+					log.Errorf("Skipping automixer actions: recommended fee rate (%s) > max fee rate (%s)",
+						feeRate, maxFeeRate)
+					return
+				}
+
+				err = w.MixAccount(changeAccount, mixAccount, mixBranch, feeRate)
 				if err != nil {
 					log.Error(err)
 				}
