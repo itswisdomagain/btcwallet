@@ -37,7 +37,7 @@ const (
 	defaultLogFilename      = "btcwallet.log"
 	defaultRPCMaxClients    = 10
 	defaultRPCMaxWebsockets = 25
-	defaultMaxFeeRate       = txrules.DefaultRelayFeePerKb * 5
+	defaultMaxFeeRate       = txrules.DefaultRelayFeePerKb * 3
 )
 
 var (

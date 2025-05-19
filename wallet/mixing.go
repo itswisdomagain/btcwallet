@@ -321,7 +321,10 @@ func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mix
 	var i int
 	var count uint32
 	var mixValue, remValue, changeValue btcutil.Amount
-	var smallestMixChange = smallestMixChange(feeRate)
+	// NOTE: use the minimum fee rate to determine smallestMixChange!
+	// TODO: the smallestMixChange can be a constant since the min. fee rate is
+	// a constant.
+	var smallestMixChange = smallestMixChange(txrules.DefaultRelayFeePerKb)
 SplitPoints:
 	for i = 0; i < len(splitPoints); i++ {
 		last := i == len(splitPoints)-1
@@ -381,6 +384,12 @@ SplitPoints:
 		return errThrottledMixRequest
 	}
 
+	// TODO: Skip mixing this input at this time if the fee would eat up a high
+	// percentage of the input amount, unless the fee amount was gotten using a
+	// reasonable fee rate (a little over the lowest possible fee rate).
+	fee := amount - btcutil.Amount(count)*mixValue - changeValue
+	feePercentage := fee * 100 / amount
+
 	var change *wire.TxOut
 	if changeValue > 0 {
 		addr, err := w.NewChangeAddress(changeAccount, waddrmgr.KeyScopeBIP0044)
@@ -400,7 +409,8 @@ SplitPoints:
 		}
 	}
 
-	log.Infof("Mixing output %v (%v)", output, amount)
+	log.Infof("Mixing output %v (%v). Fee (%v) is %d%%. Fee rate is %v",
+		output, amount, fee, feePercentage, feeRate)
 
 	expires, err := dicemixExpiry(chainClient, w.chainParams)
 	if err != nil {
