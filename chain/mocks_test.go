@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/gcs"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/neutrino"
@@ -102,6 +103,14 @@ func (m *mockChainService) IsCurrent() bool {
 }
 
 func (m *mockChainService) SendTransaction(*wire.MsgTx) error {
+	return errNotImplemented
+}
+
+func (m *mockChainService) PublishMixMessages(msgs ...mixing.Message) error {
+	return errNotImplemented
+}
+
+func (m *mockChainService) NotifyMixMessages(w neutrino.MixWallet) error {
 	return errNotImplemented
 }
 

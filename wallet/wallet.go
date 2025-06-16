@@ -256,18 +256,12 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanRPCHandler()
 }
 
-// MixSplitLimit      int    `long:"mixsplitlimit" description:"Connection limit
-// to CoinShuffle++ server per change amount"` TODO: Add to loader cfg.
-const mixSplitLimit = 10
-
-func (w *Wallet) InitMixing(mixPool *mixpool.Pool, mixcLog btclog.Logger) {
-	if mixPool != nil {
-		w.mixingEnabled = true
-		w.mixpool = mixPool
-		w.mixSems = newMixSemaphores(mixSplitLimit)
-		w.mixClient = mixclient.NewClient((*mixingWallet)(w))
-		w.mixClient.SetLogger(mixcLog)
-	}
+func (w *Wallet) EnableMixing(mixcLog btclog.Logger, mixSplitLimit int) {
+	w.mixingEnabled = true
+	w.mixpool = mixpool.NewPool((*mixpoolBlockchain)(w))
+	w.mixClient = mixclient.NewClient((*mixingWallet)(w))
+	w.mixClient.SetLogger(mixcLog)
+	w.mixSems = newMixSemaphores(mixSplitLimit)
 }
 
 func (w *Wallet) StartMixer() {
@@ -587,6 +581,10 @@ func (w *Wallet) syncWithChain(birthdayStamp *waddrmgr.BlockStamp) error {
 	// as well.  I am leaning towards allowing off all rpcclient
 	// notification re-registrations, in which case the code here should be
 	// left as is.
+	if err := chainClient.NotifyBlocks(); err != nil {
+		return err
+	}
+
 	if err := chainClient.NotifyBlocks(); err != nil {
 		return err
 	}

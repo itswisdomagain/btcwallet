@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	_ "net/http/pprof" // nolint:gosec
@@ -15,7 +16,6 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcwallet/build"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/rpc/legacyrpc"
@@ -74,25 +74,8 @@ func walletMain() error {
 
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
 	loader := wallet.NewLoader(
-		activeNet.Params, dbDir, true, cfg.DBTimeout, 250, cfg.Mixing,
+		activeNet.Params, dbDir, true, cfg.DBTimeout, 250, cfg.MixingEnabled, cfg.MixSplitLimit,
 	)
-
-	// Stop any services started by the loader after the shutdown procedure is
-	// initialized and this function returns.
-	defer func() {
-		// When panicing, do not cleanly unload the wallet (by closing
-		// the db).  If a panic occurred inside a bolt transaction, the
-		// db mutex is still held and this causes a deadlock.
-		if r := recover(); r != nil {
-			panic(r)
-		}
-		err := loader.UnloadWallet()
-		if err != nil && !errors.Is(err, wallet.ErrNotLoaded) {
-			log.Errorf("Failed to close wallet: %v", err)
-		} else if err == nil {
-			log.Infof("Closed wallet")
-		}
-	}()
 
 	// Create and start HTTP server to serve wallet client connections.
 	// This will be updated with the wallet and chain server RPC client
@@ -103,16 +86,11 @@ func walletMain() error {
 		return err
 	}
 
-	// Create and start chain RPC client so it's ready to connect to
-	// the wallet when loaded later.
-	// if !cfg.NoInitialLoad {
-	// 	go rpcClientConnectLoop(legacyRPCServer, loader)
-	// }
-
 	loader.RunAfterLoad(func(w *wallet.Wallet) {
 		startWalletRPCServices(w, rpcs, legacyRPCServer)
 	})
 
+	var walletLoaded bool
 	if !cfg.NoInitialLoad {
 		// Load the wallet database.  It must have been created already
 		// or this will return an appropriate error.
@@ -121,73 +99,7 @@ func walletMain() error {
 			log.Error(err)
 			return err
 		}
-
-		w, _ := loader.LoadedWallet()
-		if cfg.Pass != "" {
-			err = w.Unlock([]byte(cfg.Pass), nil)
-			if err != nil {
-				log.Errorf("Incorrect passphrase in pass config setting.")
-				return err
-			}
-		} else {
-			_ = startPromptPass(w)
-		}
-
-		// Create and start chain RPC client _after_ prompting for password, if
-		// necessary. Doing this sooner may cause chain logs to hinder the
-		// password prompt process.
-		go rpcClientConnectLoop(legacyRPCServer, loader)
-
-		if cfg.MixChange {
-			// Validate mix accounts now that the wallet has been loaded.
-			var err error
-			var lastFlag, lastLookup string
-			lookup := func(flag, name string) (account uint32) {
-				if err == nil {
-					lastFlag = flag
-					lastLookup = name
-					account, err = w.AccountNumber(waddrmgr.KeyScopeBIP0044, name)
-					var mErr waddrmgr.ManagerError
-					if errors.As(err, &mErr) && mErr.ErrorCode == waddrmgr.ErrAccountNotFound {
-						log.Infof("%s: account %q does not exist; creating...", flag, name)
-						account, err = w.NextAccount(waddrmgr.KeyScopeBIP0044, name)
-					}
-				}
-				return
-			}
-			mixedAccount := lookup("mixedaccount", cfg.mixedAccount)
-			changeAccount := lookup("changeaccount", cfg.ChangeAccount)
-
-			// Check if any of the above calls to lookup() have failed.
-			if err != nil {
-				log.Errorf("%s: error looking up account %q: %v", lastFlag, lastLookup, err)
-				return err
-			}
-
-			// Initialize the feeoracle tool.
-			certs, _ := os.ReadFile(cfg.CAFile.Value) // ignore error
-			feeOracle, err := initFeeOracle(cfg.RPCConnect, cfg.BtcdUsername, cfg.BtcdPassword, certs, cfg.DisableClientTLS)
-			if err != nil {
-				log.Errorf("error initializing fee oracle: %v", err)
-				return err
-			}
-
-			log.Infof("Starting automixer")
-			automixerdone := make(chan struct{})
-			go func() {
-				err := w.StartAutoMixer(changeAccount, mixedAccount, cfg.mixedBranch,
-					feeOracle.RecommendedFeeRate, cfg.MaxFeeRate.Amount)
-				if err != nil && !w.ShuttingDown() {
-					log.Errorf("automixer ended: %v", err)
-				}
-				automixerdone <- struct{}{}
-			}()
-
-			defer func() {
-				<-automixerdone
-				feeOracle.rpcClient.Shutdown()
-			}()
-		}
+		walletLoaded = true
 	}
 
 	// Add interrupt handlers to shutdown the various process components
@@ -220,6 +132,89 @@ func walletMain() error {
 		}()
 	}
 
+	if walletLoaded {
+		w, _ := loader.LoadedWallet()
+		if cfg.Pass != "" {
+			err = w.Unlock([]byte(cfg.Pass), nil)
+			if err != nil {
+				log.Errorf("Incorrect passphrase in pass config setting.")
+				return err
+			}
+		} else {
+			pass := startPromptPass(w)
+			if len(pass) == 0 && cfg.MixChange {
+				log.Errorf("Wallet passphrase is required to mix change.")
+				return fmt.Errorf("wallet passphrase required")
+			}
+			for i := range pass {
+				pass[i] = 0
+			}
+		}
+
+		// Create and start chain RPC client now (i.e. _after_ prompting for
+		// password, if required). This was previously done before loading the
+		// wallet, so that the chain rpc client is ready to connect to the
+		// wallet when it is loaded later, but doing this before prompting for
+		// wallet password may cause chain logs to hinder the password input
+		// process.
+		go rpcClientConnectLoop(legacyRPCServer, loader)
+
+		if cfg.MixChange {
+			if !cfg.MixingEnabled {
+				log.Error("Cannot mix change when mixing is disabled for the wallet.")
+				return fmt.Errorf("cannot mix change when mixing is disabled for the wallet")
+			}
+
+			// Validate mix accounts now that the wallet has been loaded.
+			var err error
+			var lastFlag, lastLookup string
+			lookup := func(flag, name string) (account uint32) {
+				if err == nil {
+					lastFlag = flag
+					lastLookup = name
+					account, err = w.AccountNumber(waddrmgr.KeyScopeBIP0044, name)
+					var mErr waddrmgr.ManagerError
+					if errors.As(err, &mErr) && mErr.ErrorCode == waddrmgr.ErrAccountNotFound {
+						log.Infof("%s: account %q does not exist; creating...", flag, name)
+						account, err = w.NextAccount(waddrmgr.KeyScopeBIP0044, name)
+					}
+				}
+				return
+			}
+			mixedAccount := lookup("mixedaccount", cfg.mixedAccount)
+			changeAccount := lookup("changeaccount", cfg.ChangeAccount)
+
+			// Check if any of the above calls to lookup() have failed.
+			if err != nil {
+				log.Errorf("%s: error looking up account %q: %v", lastFlag, lastLookup, err)
+				return err
+			}
+
+			// Initialize the feeoracle tool.
+			feeOracle, err := initFeeOracle(cfg.RPCConnect, cfg.BtcdUsername, cfg.BtcdPassword, cfg.rpcCerts, cfg.DisableClientTLS)
+			if err != nil {
+				log.Errorf("error initializing fee oracle: %v", err)
+				return err
+			}
+
+			log.Infof("Starting automixer")
+			automixerdone := make(chan struct{})
+			go func() {
+				err := w.StartAutoMixer(changeAccount, mixedAccount, cfg.mixedBranch,
+					feeOracle.RecommendedFeeRate, cfg.MaxFeeRate.Amount)
+				if err != nil && !w.ShuttingDown() {
+					log.Errorf("automixer ended: %v", err)
+				}
+				automixerdone <- struct{}{}
+			}()
+
+			defer func() {
+				<-automixerdone
+				feeOracle.rpcClient.Shutdown()
+			}()
+		}
+	}
+
 	<-interruptHandlersDone
 	log.Info("Shutdown complete")
 	return nil
@@ -233,11 +228,6 @@ func walletMain() error {
 // associated with the server for RPC passthrough and to enable additional
 // methods.
 func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Loader) {
-	var certs []byte
-	if !cfg.UseSPV {
-		certs = readCAFile()
-	}
-
 	for {
 		var (
 			chainClient chain.Interface
@@ -272,27 +262,16 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 				continue
 			}
 			chainClient = chain.NewNeutrinoClient(activeNet.Params, chainService)
+			err = chainClient.Start()
+			if err != nil {
+				log.Errorf("Couldn't start Neutrino client: %s", err)
+			}
 		} else {
-			chainClient, err = initChainRPC(certs)
+			chainClient, err = startChainRPC()
 			if err != nil {
 				log.Errorf("Unable to open connection to consensus RPC server: %v", err)
 				continue
 			}
-		}
-
-		var mixPool *mixpool.Pool
-		mixingBackend, backendSupportsMixing := chainClient.(chain.MixingInterface)
-		if backendSupportsMixing && loader.MixingEnabled() {
-			mixPool = mixpool.NewPool(chain.NewMixpoolBlockchain(chainClient, activeNet.Params))
-			err = mixingBackend.StartWithMixing(context.Background(), (*chain.MixWallet)(mixPool))
-		} else {
-			if loader.MixingEnabled() {
-				log.Warnf("Connected backend (%T) does not support mixing", chainClient)
-			}
-			err = chainClient.Start(context.Background())
-		}
-		if err != nil {
-			log.Errorf("Couldn't start Neutrino client: %s", err)
 		}
 
 		// Rather than inlining this logic directly into the loader
@@ -303,7 +282,9 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		// mutex is used to make this concurrent safe.
 		associateRPCClient := func(w *wallet.Wallet) {
 			w.SynchronizeRPC(chainClient)
-			w.InitMixing(mixPool, mixcLog)
+			if loader.MixingEnabled() {
+				w.EnableMixing(mixcLog, loader.MixSplitLimit())
+			}
 			if legacyRPCServer != nil {
 				legacyRPCServer.SetChainServer(chainClient)
 			}
@@ -362,17 +343,18 @@ func readCAFile() []byte {
 	return certs
 }
 
-// initChainRPC opens a RPC client connection to a btcd server for blockchain
+// startChainRPC opens a RPC client connection to a btcd server for blockchain
 // services.  This function uses the RPC options from the global config and
 // there is no recovery in case the server is not available or if there is an
 // authentication error.  Instead, all requests to the client will simply error.
-func initChainRPC(certs []byte) (*chain.RPCClient, error) {
+func startChainRPC() (*chain.RPCClient, error) {
 	log.Infof("Attempting RPC client connection to %v", cfg.RPCConnect)
 	rpcc, err := chain.NewRPCClient(activeNet.Params, cfg.RPCConnect,
-		cfg.BtcdUsername, cfg.BtcdPassword, certs, cfg.DisableClientTLS, 0)
+		cfg.BtcdUsername, cfg.BtcdPassword, cfg.rpcCerts, cfg.DisableClientTLS, 0)
 	if err != nil {
 		return nil, err
 	}
 
+	err = rpcc.Start(context.Background())
 	return rpcc, err
 }

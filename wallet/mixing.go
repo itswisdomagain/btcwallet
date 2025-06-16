@@ -29,6 +29,27 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// MixMessage queries the mixpool for a message.  Only messages that have been
+// recently inv'd should be queried.
+func (w *Wallet) MixMessage(query *chainhash.Hash) (mixing.Message, error) {
+	return w.mixpool.Message(query)
+}
+
+type mixpoolBlockchain Wallet
+
+func (b *mixpoolBlockchain) CurrentTip() (chainhash.Hash, int64) {
+	w := (*Wallet)(b)
+	hash, height, err := w.ChainClient().GetBestBlock()
+	if err != nil {
+		return chainhash.Hash{}, 0
+	}
+	return *hash, int64(height)
+}
+
+func (b *mixpoolBlockchain) ChainParams() *chaincfg.Params {
+	return (*Wallet)(b).ChainParams()
+}
+
 // Hash160er is an interface that allows the RIPEMD-160 hash to be obtained from
 // addresses that involve them.
 type Hash160er interface {
@@ -93,14 +114,9 @@ func (w *mixingWallet) Mixpool() *mixpool.Pool {
 func (w *mixingWallet) SubmitMixMessage(ctx context.Context, msg mixing.Message) (err error) {
 	wallet := (*Wallet)(w)
 
-	cc, err := wallet.requireChainClient()
+	chainClient, err := wallet.requireChainClient()
 	if err != nil {
 		return err
-	}
-
-	chainClient, ok := cc.(chain.MixingInterface)
-	if !ok {
-		return fmt.Errorf("wallet backend does not support mixing")
 	}
 
 	defer func() {
@@ -549,4 +565,15 @@ func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, fet
 			}()
 		}
 	}
+}
+
+// AcceptMixMessage adds a mixing message received from the network backend to
+// the wallet's mixpool.
+func (w *Wallet) AcceptMixMessage(msg mixing.Message) error {
+	_, err := w.mixpool.AcceptMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

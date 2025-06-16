@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/btcjson"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
@@ -71,6 +72,10 @@ func (m *mockChainClient) SendRawTransaction(*wire.MsgTx, bool) (
 	return nil, nil
 }
 
+func (m *mockChainClient) PublishMixMessages(msgs ...mixing.Message) error {
+	return nil
+}
+
 func (m *mockChainClient) Rescan(*chainhash.Hash, []btcutil.Address,
 	map[wire.OutPoint]btcutil.Address) error {
 	return nil
@@ -81,6 +86,10 @@ func (m *mockChainClient) NotifyReceived([]btcutil.Address) error {
 }
 
 func (m *mockChainClient) NotifyBlocks() error {
+	return nil
+}
+
+func (m *mockChainClient) NotifyMixMessages(chain.MixingWallet) error {
 	return nil
 }
 

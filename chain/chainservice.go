@@ -7,6 +7,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/gcs"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightninglabs/neutrino"
 	"github.com/lightninglabs/neutrino/banman"
@@ -24,6 +25,8 @@ type NeutrinoChainService interface {
 	GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader, error)
 	IsCurrent() bool
 	SendTransaction(*wire.MsgTx) error
+	PublishMixMessages(msgs ...mixing.Message) error
+	NotifyMixMessages(w neutrino.MixWallet) error
 	GetCFilter(chainhash.Hash, wire.FilterType,
 		...neutrino.QueryOption) (*gcs.Filter, error)
 	GetUtxo(...neutrino.RescanOption) (*neutrino.SpendReport, error)

@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/btcsuite/btcd/btcjson"
@@ -17,10 +19,13 @@ import (
 	"github.com/btcsuite/btcd/btcutil/gcs/builder"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wtxmgr"
+	"github.com/decred/dcrd/crypto/blake256"
+	"github.com/decred/dcrd/mixing/mixpool"
 )
 
 // RPCClient represents a persistent client connection to a bitcoin RPC server
@@ -34,6 +39,10 @@ type RPCClient struct {
 	enqueueNotification chan interface{}
 	dequeueNotification chan interface{}
 	currentBlock        chan *waddrmgr.BlockStamp
+
+	blake256Hasher   hash.Hash
+	blake256HasherMu sync.Mutex
+	mixWallet        atomic.Pointer[MixingWallet]
 
 	quit    chan struct{}
 	wg      sync.WaitGroup
@@ -76,6 +85,7 @@ func NewRPCClient(chainParams *chaincfg.Params, connect, user, pass string, cert
 		enqueueNotification: make(chan interface{}),
 		dequeueNotification: make(chan interface{}),
 		currentBlock:        make(chan *waddrmgr.BlockStamp),
+		blake256Hasher:      blake256.New(),
 		quit:                make(chan struct{}),
 	}
 	ntfnCallbacks := &rpcclient.NotificationHandlers{
@@ -86,6 +96,7 @@ func NewRPCClient(chainParams *chaincfg.Params, connect, user, pass string, cert
 		OnRedeemingTx:       client.onRedeemingTx,
 		OnRescanFinished:    client.onRescanFinished,
 		OnRescanProgress:    client.onRescanProgress,
+		OnMixMessage:        client.onMixMessage,
 	}
 	rpcClient, err := rpcclient.New(client.connConfig, ntfnCallbacks)
 	if err != nil {
@@ -170,6 +181,7 @@ func NewRPCClientWithConfig(cfg *RPCClientConfig) (*RPCClient, error) {
 		enqueueNotification: make(chan interface{}),
 		dequeueNotification: make(chan interface{}),
 		currentBlock:        make(chan *waddrmgr.BlockStamp),
+		blake256Hasher:      blake256.New(),
 		quit:                make(chan struct{}),
 	}
 
@@ -185,6 +197,7 @@ func NewRPCClientWithConfig(cfg *RPCClientConfig) (*RPCClient, error) {
 			OnRedeemingTx:       client.onRedeemingTx,
 			OnRescanFinished:    client.onRescanFinished,
 			OnRescanProgress:    client.onRescanProgress,
+			OnMixMessage:        client.onMixMessage,
 		}
 	}
 
@@ -490,6 +503,13 @@ func (c *RPCClient) onRescanFinished(hash *chainhash.Hash, height int32, blkTime
 
 }
 
+func (c *RPCClient) onMixMessage(msg mixing.Message) {
+	select {
+	case c.enqueueNotification <- msg:
+	case <-c.quit:
+	}
+}
+
 // handler maintains a queue of notifications and the current state (best
 // block) of the chain.
 func (c *RPCClient) handler() {
@@ -542,6 +562,13 @@ out:
 				}
 			}
 
+			if msg, ok := next.(mixing.Message); ok {
+				err := c.handleMixMessage(msg)
+				if err != nil {
+					log.Errorf("mixmessage notification error: %v", err)
+				}
+			}
+
 			notifications[0] = nil
 			notifications = notifications[1:]
 			if len(notifications) != 0 {
@@ -565,6 +592,40 @@ out:
 	c.Stop()
 	close(c.dequeueNotification)
 	c.wg.Done()
+}
+
+func (c *RPCClient) handleMixMessage(msg mixing.Message) error {
+	var wallet MixingWallet
+	if w := c.mixWallet.Load(); w != nil && *w != nil {
+		wallet = *w
+	} else {
+		log.Debugf("Ignoring mixmessage notification: mixing disabled")
+		return nil
+	}
+
+	c.blake256HasherMu.Lock()
+	msg.WriteHash(c.blake256Hasher)
+	c.blake256HasherMu.Unlock()
+
+	err := wallet.AcceptMixMessage(msg)
+	var e *mixpool.MissingOwnPRError
+	if errors.As(err, &e) {
+		ke, ok := msg.(*wire.MsgMixKeyExchange)
+		if !ok || ke.Run != 0 {
+			return err
+		}
+		pr, err := c.Client.GetMixMessage(e.MissingPR.String())
+		if err == nil {
+			c.blake256HasherMu.Lock()
+			pr.WriteHash(c.blake256Hasher)
+			c.blake256HasherMu.Unlock()
+
+			err = wallet.AcceptMixMessage(pr)
+		}
+		return err
+	}
+
+	return err
 }
 
 // POSTClient creates the equivalent HTTP POST rpcclient.Client.
@@ -639,4 +700,25 @@ func (c *RPCClient) SendRawTransaction(tx *wire.MsgTx,
 	}
 
 	return txid, nil
+}
+
+// PublishMixMessages submits each mixing message to the btcd mixpool for
+// acceptance. If accepted, the messages are published to other peers.
+func (c *RPCClient) PublishMixMessages(msgs ...mixing.Message) error {
+	var firstErr error
+	for _, msg := range msgs {
+		err := c.Client.SendRawMixMessage(msg)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	return nil
+}
+
+func (c *RPCClient) NotifyMixMessages(w MixingWallet) error {
+	c.mixWallet.Store(&w)
+	return c.Client.NotifyMixMessages()
 }

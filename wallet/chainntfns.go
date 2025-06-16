@@ -204,11 +204,15 @@ func (w *Wallet) handleChainNotifications() {
 			case *chain.RescanFinished:
 				err = catchUpHashes(w, chainClient, n.Height)
 				notificationName = "rescan finished"
-				wasSynced := w.ChainSynced()
 				w.SetChainSynced(true)
-				if !wasSynced {
+				// Request notifications for mixing messages.
+				if w.mixingEnabled {
 					w.StartMixer()
+					if err := chainClient.NotifyMixMessages(w); err != nil {
+						log.Errorf("chainClient.NotifyMixMessages error: %v", err)
+					}
 				}
+
 				select {
 				case w.rescanNotifications <- n:
 				case <-w.quitChan():

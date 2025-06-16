@@ -14,7 +14,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/mixing"
-	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -74,47 +73,6 @@ type NeutrinoClient struct {
 // A compile-time check to ensure that RPCClient satisfies the chain.Interface
 // interface and chain.MixingInterface.
 var _ Interface = (*NeutrinoClient)(nil)
-var _ MixingInterface = (*NeutrinoClient)(nil)
-
-type MixpoolBlockchain struct {
-	chainClient Interface
-	params      *chaincfg.Params
-}
-
-func NewMixpoolBlockchain(chainClient Interface, params *chaincfg.Params) *MixpoolBlockchain {
-	return &MixpoolBlockchain{chainClient: chainClient, params: params}
-}
-
-func (b *MixpoolBlockchain) CurrentTip() (chainhash.Hash, int64) {
-	hash, height, err := b.chainClient.GetBestBlock()
-	if err != nil {
-		return chainhash.Hash{}, 0
-	}
-	return *hash, int64(height)
-}
-
-func (b *MixpoolBlockchain) ChainParams() *chaincfg.Params {
-	return b.params
-}
-
-type MixWallet mixpool.Pool
-
-// AcceptMixMessage adds a mixing message received from the network backend to
-// the wallet's mixpool.
-func (w *MixWallet) AcceptMixMessage(msg mixing.Message) error {
-	_, err := (*mixpool.Pool)(w).AcceptMessage(msg)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// MixMessage queries the mixpool for a message.  Only messages that have been
-// recently inv'd should be queried.
-func (w *MixWallet) MixMessage(query *chainhash.Hash) (mixing.Message, error) {
-	return (*mixpool.Pool)(w).Message(query)
-}
 
 // NewNeutrinoClient creates a new NeutrinoClient struct with a backing
 // ChainService.
@@ -144,33 +102,9 @@ func (s *NeutrinoClient) BackEnd() string {
 	return "neutrino"
 }
 
-func (s *NeutrinoClient) StartWithMixing(ctx context.Context, w neutrino.MixWallet) error {
-	return s.start(ctx, w)
-}
-
-func (s *NeutrinoClient) PublishMixMessages(msgs ...mixing.Message) error {
-	if cs, ok := s.CS.(MixingInterface); ok {
-		return cs.PublishMixMessages(msgs...)
-	} else {
-		return fmt.Errorf("error starting chain service: %T does not support mixing", s.CS)
-	}
-}
-
 // Start replicates the RPC client's Start method.
 func (s *NeutrinoClient) Start(ctx context.Context) error {
-	return s.start(ctx, nil)
-}
-
-func (s *NeutrinoClient) start(ctx context.Context, w neutrino.MixWallet) error {
-	var err error
-	if w == nil {
-		err = s.CS.Start(ctx)
-	} else if cs, ok := s.CS.(MixingInterface); ok {
-		err = cs.StartWithMixing(ctx, w)
-	} else {
-		err = fmt.Errorf("error starting chain service: %T does not support mixing", s.CS)
-	}
-	if err != nil {
+	if err := s.CS.Start(ctx); err != nil {
 		return fmt.Errorf("error starting chain service: %w", err)
 	}
 
@@ -292,6 +226,10 @@ func (s *NeutrinoClient) SendRawTransaction(tx *wire.MsgTx, allowHighFees bool) 
 	}
 	hash := tx.TxHash()
 	return &hash, nil
+}
+
+func (s *NeutrinoClient) PublishMixMessages(msgs ...mixing.Message) error {
+	return s.CS.PublishMixMessages(msgs...)
 }
 
 // TestMempoolAcceptCmd returns result of mempool acceptance tests indicating
@@ -611,6 +549,10 @@ func (s *NeutrinoClient) NotifyReceived(addrs []btcutil.Address) error {
 	s.rescanErr = s.rescan.Start()
 	s.clientMtx.Unlock()
 	return nil
+}
+
+func (s *NeutrinoClient) NotifyMixMessages(w MixingWallet) error {
+	return s.CS.NotifyMixMessages(w)
 }
 
 // Notifications replicates the RPC client's Notifications method.

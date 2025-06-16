@@ -82,7 +82,8 @@ type Loader struct {
 	recoveryWindow uint32
 	wallet         *Wallet
 	localDB        bool
-	mixing         bool
+	mixingEnabled  bool
+	mixSplitLimit  int
 	walletExists   func() (bool, error)
 	walletCreated  func(db walletdb.ReadWriteTx) error
 	db             walletdb.DB
@@ -94,7 +95,7 @@ type Loader struct {
 // starting from the last SyncedTo height.
 func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	noFreelistSync bool, timeout time.Duration, recoveryWindow uint32,
-	mixing bool, opts ...LoaderOption) *Loader {
+	mixingEnabled bool, mixSplitLimit int, opts ...LoaderOption) *Loader {
 
 	cfg := defaultLoaderConfig()
 	for _, opt := range opts {
@@ -109,7 +110,8 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 		timeout:        timeout,
 		recoveryWindow: recoveryWindow,
 		localDB:        true,
-		mixing:         mixing,
+		mixingEnabled:  mixingEnabled,
+		mixSplitLimit:  mixSplitLimit,
 	}
 }
 
@@ -119,7 +121,7 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 // function is also passed which will override Loader.WalletExists().
 func NewLoaderWithDB(chainParams *chaincfg.Params, recoveryWindow uint32,
 	db walletdb.DB, walletExists func() (bool, error),
-	mixing bool, opts ...LoaderOption) (*Loader, error) {
+	mixingEnabled bool, mixSplitLimit int, opts ...LoaderOption) (*Loader, error) {
 
 	if db == nil {
 		return nil, fmt.Errorf("no DB provided")
@@ -139,14 +141,19 @@ func NewLoaderWithDB(chainParams *chaincfg.Params, recoveryWindow uint32,
 		chainParams:    chainParams,
 		recoveryWindow: recoveryWindow,
 		localDB:        false,
-		mixing:         mixing,
+		mixingEnabled:  mixingEnabled,
+		mixSplitLimit:  mixSplitLimit,
 		walletExists:   walletExists,
 		db:             db,
 	}, nil
 }
 
 func (l *Loader) MixingEnabled() bool {
-	return l.mixing
+	return l.mixingEnabled
+}
+
+func (l *Loader) MixSplitLimit() int {
+	return l.mixSplitLimit
 }
 
 // onLoaded executes each added callback and prevents loader from loading any

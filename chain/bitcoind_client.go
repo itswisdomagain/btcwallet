@@ -13,6 +13,7 @@ import (
 	"github.com/btcsuite/btcd/btcjson"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/mixing"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
@@ -222,6 +223,10 @@ func (c *BitcoindClient) SendRawTransaction(tx *wire.MsgTx,
 	return txid, nil
 }
 
+func (c *BitcoindClient) PublishMixMessages(msgs ...mixing.Message) error {
+	return fmt.Errorf("not supported")
+}
+
 // MapRPCErr takes an error returned from calling RPC methods from various
 // chain backends and maps it to an defined error here.
 func (c *BitcoindClient) MapRPCErr(rpcErr error) error {
@@ -371,6 +376,10 @@ func (c *BitcoindClient) NotifyBlocks() error {
 	go c.ntfnHandler()
 
 	return nil
+}
+
+func (c *BitcoindClient) NotifyMixMessages(MixingWallet) error {
+	return fmt.Errorf("not supported")
 }
 
 // shouldNotifyBlocks determines whether the client should send block

@@ -12,7 +12,6 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wtxmgr"
-	"github.com/lightninglabs/neutrino"
 )
 
 // isCurrentDelta is the delta duration we'll use from the present time to
@@ -46,18 +45,20 @@ type Interface interface {
 	FilterBlocks(*FilterBlocksRequest) (*FilterBlocksResponse, error)
 	BlockStamp() (*waddrmgr.BlockStamp, error)
 	SendRawTransaction(*wire.MsgTx, bool) (*chainhash.Hash, error)
+	PublishMixMessages(msgs ...mixing.Message) error
 	Rescan(*chainhash.Hash, []btcutil.Address, map[wire.OutPoint]btcutil.Address) error
 	NotifyReceived([]btcutil.Address) error
 	NotifyBlocks() error
+	NotifyMixMessages(w MixingWallet) error
 	Notifications() <-chan interface{}
 	BackEnd() string
 	TestMempoolAccept([]*wire.MsgTx, float64) ([]*btcjson.TestMempoolAcceptResult, error)
 	MapRPCErr(err error) error
 }
 
-type MixingInterface interface {
-	StartWithMixing(ctx context.Context, w neutrino.MixWallet) error
-	PublishMixMessages(msgs ...mixing.Message) error
+type MixingWallet interface {
+	AcceptMixMessage(msg mixing.Message) error
+	MixMessage(query *chainhash.Hash) (mixing.Message, error)
 }
 
 // Notification types.  These are defined here and processed from from reading

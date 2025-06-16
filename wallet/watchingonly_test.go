@@ -22,7 +22,7 @@ func TestCreateWatchingOnly(t *testing.T) {
 
 	loader := NewLoader(
 		&chaincfg.TestNet3Params, dir, true, defaultDBTimeout, 250,
-		false, WithWalletSyncRetryInterval(10*time.Millisecond),
+		false, 10, WithWalletSyncRetryInterval(10*time.Millisecond),
 	)
 	_, err := loader.CreateNewWatchingOnlyWallet(pubPass, time.Now())
 	if err != nil {

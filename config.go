@@ -19,6 +19,7 @@ import (
 	"decred.org/cspp/v2/solverrpc"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcwallet/build"
 	"github.com/btcsuite/btcwallet/internal/cfgutil"
 	"github.com/btcsuite/btcwallet/internal/legacy/keystore"
@@ -38,6 +39,7 @@ const (
 	defaultRPCMaxClients    = 10
 	defaultRPCMaxWebsockets = 25
 	defaultMaxFeeRate       = txrules.DefaultRelayFeePerKb * 3
+	defaultMixSplitLimit    = 10
 )
 
 var (
@@ -47,6 +49,30 @@ var (
 	defaultRPCKeyFile  = filepath.Join(defaultAppDataDir, "rpc.key")
 	defaultRPCCertFile = filepath.Join(defaultAppDataDir, "rpc.cert")
 	defaultLogDir      = filepath.Join(defaultAppDataDir, defaultLogDirname)
+
+	// TODO: Remove.
+	defaultRPCClientCfg = &rpcclient.ConnConfig{
+		Host: "159.65.29.55:18334",
+		User: "user",
+		Pass: "pass",
+		Certificates: []byte(`-----BEGIN CERTIFICATE-----
+MIICwDCCAiGgAwIBAgIQd/MZ+H/WZIpNzjUGpPJkwzAKBggqhkjOPQQDBDA/MSAw
+HgYDVQQKExdidGNkIGF1dG9nZW5lcmF0ZWQgY2VydDEbMBkGA1UEAxMSdWJ1bnR1
+LWMtMi1sb24xLTAxMB4XDTI1MDUwNDEzNDExNFoXDTM1MDUwMzEzNDExNFowPzEg
+MB4GA1UEChMXYnRjZCBhdXRvZ2VuZXJhdGVkIGNlcnQxGzAZBgNVBAMTEnVidW50
+dS1jLTItbG9uMS0wMTCBmzAQBgcqhkjOPQIBBgUrgQQAIwOBhgAEALdR8kDxYvol
+EWfAglkrtRV1jlDfYVKsPOhZRMHkDVSgB7k5EckPL7iGr5J2wMHjYFymjM5xoRyX
+IZE96e3hAQEuAGfX3hRgtDQUqMLniJOE7bv5KvVGkA429YYt2GNejetJdoJN9yql
+hYQXOMV38jkJPgtbX6Jd2stvkrs9DKrw/iP2o4G7MIG4MA4GA1UdDwEB/wQEAwIC
+pDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBQ9Cll1aM/8VGRWaLQ8Be/ikrJy
+/DB2BgNVHREEbzBtghJ1YnVudHUtYy0yLWxvbjEtMDGCCWxvY2FsaG9zdIcEfwAA
+AYcQAAAAAAAAAAAAAAAAAAAAAYcEn0EdN4cEChAABocECmoAA4cQ/oAAAAAAAAAg
+X1f//vVmd4cQ/oAAAAAAAAB4mRj//vCmpTAKBggqhkjOPQQDBAOBjAAwgYgCQgEP
+yL7GF7l9vinSOzms6BO9ioiBHVvR7j7mmAXi/yLNF3zAaejTzVZgLKsq8bvJ6LdS
+u9gTD8VGtZHwrRKBFzWqaQJCAZJ1RE2Hr4sYJOK0OBJFK6defDbou+WTJINPd9T4
+ugZprz4E8X4hV9l8SfJokxNCZMKWkcl716OFTZaBlCRn8kZL
+-----END CERTIFICATE-----`),
+	}
 )
 
 //nolint:lll
@@ -84,6 +110,7 @@ type config struct {
 	Proxy            string                  `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
 	ProxyUser        string                  `long:"proxyuser" description:"Username for proxy server"`
 	ProxyPass        string                  `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
+	rpcCerts         []byte
 
 	// SPV client options
 	UseSPV       bool          `long:"usespv" description:"Enables the experimental use of SPV rather than RPC for chain synchronization"`
@@ -120,7 +147,7 @@ type config struct {
 	// Deprecated options
 	DataDir *cfgutil.ExplicitString `short:"b" long:"datadir" default-mask:"-" description:"DEPRECATED -- use appdata instead"`
 
-	Mixing        bool                    `long:"mixing" description:"Enable mixing support"`
+	MixingEnabled bool                    `long:"mixing" description:"Enable creation of mixed transactions and participation in the peer-to-peer mixing network"`
 	CSPPSolver    *cfgutil.ExplicitString `long:"csppsolver" description:"Path to CSPP solver executable (if not in PATH)"`
 	MaxFeeRate    *cfgutil.AmountFlag     `long:"maxfeerate" description:"Max tx fee per kilobyte (for mix transactions)"`
 	MixedAccount  string                  `long:"mixedaccount" description:"Account/branch used to derive CoinShuffle++ mixed outputs"`
@@ -128,6 +155,7 @@ type config struct {
 	mixedBranch   uint32
 	ChangeAccount string `long:"changeaccount" description:"Account used to derive unmixed CoinJoin outputs in CoinShuffle++ protocol"`
 	MixChange     bool   `long:"mixchange" description:"Use CoinShuffle++ to mix change account outputs into mix account"`
+	MixSplitLimit int    `long:"mixsplitlimit" description:"Connection limit to CoinShuffle++ server per change amount"`
 }
 
 // cleanAndExpandPath expands environement variables and leading ~ in the
@@ -298,6 +326,7 @@ func loadConfig() (*config, []string, error) {
 		DBTimeout:              wallet.DefaultDBTimeout,
 		CSPPSolver:             cfgutil.NewExplicitString(solverrpc.SolverProcess),
 		MaxFeeRate:             cfgutil.NewAmountFlag(defaultMaxFeeRate),
+		MixSplitLimit:          defaultMixSplitLimit,
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -567,6 +596,15 @@ func loadConfig() (*config, []string, error) {
 		return nil, nil, err
 	}
 
+	// TODO: Remove, for testing only.
+	if cfg.RPCConnect == "" {
+		cfg.RPCConnect = defaultRPCClientCfg.Host
+		cfg.BtcdUsername = defaultRPCClientCfg.User
+		cfg.BtcdPassword = defaultRPCClientCfg.Pass
+		cfg.CAFile.UnmarshalFlag("test server ca")
+		cfg.rpcCerts = defaultRPCClientCfg.Certificates
+	}
+
 	localhostListeners := map[string]struct{}{
 		"localhost": {},
 		"127.0.0.1": {},
@@ -630,6 +668,9 @@ func loadConfig() (*config, []string, error) {
 						}
 					}
 				}
+			}
+			if certs := readCAFile(); len(certs) > 0 {
+				cfg.rpcCerts = certs
 			}
 		}
 	}
@@ -730,7 +771,7 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	var solverMustWork bool
-	if cfg.Mixing {
+	if cfg.MixingEnabled {
 		if cfg.CSPPSolver.ExplicitlySet() {
 			solverrpc.SolverProcess = cfg.CSPPSolver.Value
 			solverMustWork = true
