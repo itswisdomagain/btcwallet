@@ -130,6 +130,8 @@ func setLogLevel(subsystemID string, logLevel string) {
 	// Defaults to info if the log level is invalid.
 	level, _ := btclog.LevelFromString(logLevel)
 	logger.SetLevel(level)
+	mixcLog.SetLevel(btclog.LevelDebug)
+	mixpLog.SetLevel(btclog.LevelDebug)
 }
 
 // setLogLevels sets the log level for all subsystem loggers to the passed
