@@ -32,5 +32,5 @@ func (oracle *rpcFeeOracle) RecommendedFeeRate() (btcutil.Amount, error) {
 	if err != nil {
 		return 0, err
 	}
-	return btcutil.Amount(feeRate), nil
+	return btcutil.NewAmount(feeRate)
 }

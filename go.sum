@@ -121,8 +121,8 @@ github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/ad
 github.com/gorilla/websocket v1.5.1 h1:gmztn0JnHVt9JZquRuzLw3g4wouNVzKL15iLr/zn/QY=
 github.com/gorilla/websocket v1.5.1/go.mod h1:x3kM2JMyaluk02fnUJpQuwD2dCS5NDG2ZHL0uE0tcaY=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
-github.com/itswisdomagain/btcd v0.0.0-20250616121115-2bea76e7b248 h1:U8oEKlQb9COlz62WrnOFX6J60CmTTqCVjxEk02HjafA=
-github.com/itswisdomagain/btcd v0.0.0-20250616121115-2bea76e7b248/go.mod h1:QluwwAbRsD6mtmVfMOXtBJV5fnOLfNOD1qaBbkjg7hI=
+github.com/itswisdomagain/btcd v0.0.0-20250617101202-2b5f0c1d8d93 h1:7+OSYJ4Rn1qGFh+vPUGPcBrRx9sQeGFtYiJ1NROC78g=
+github.com/itswisdomagain/btcd v0.0.0-20250617101202-2b5f0c1d8d93/go.mod h1:QluwwAbRsD6mtmVfMOXtBJV5fnOLfNOD1qaBbkjg7hI=
 github.com/itswisdomagain/neutrino v0.0.0-20250616130718-ce8e920a31b2 h1:TGopQ/CYTXHzvGK2K5IP+o6RJufU1FlnYLR/cAUokm0=
 github.com/itswisdomagain/neutrino v0.0.0-20250616130718-ce8e920a31b2/go.mod h1:sz1xxVqNCBlVa2ru7zXnD+MJszIuRmJY2AUQH92DlF0=
 github.com/jessevdk/go-flags v1.5.0/go.mod h1:Fw0T6WPc1dYxT4mKEZRfG5kJhaTDP9pj1c2EWnYs/m4=

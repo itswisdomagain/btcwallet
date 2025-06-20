@@ -324,7 +324,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 	}
 }
 
-func readCAFile() []byte {
+func readCAFile(cfg *config) []byte {
 	// Read certificate file if TLS is not disabled.
 	var certs []byte
 	if !cfg.DisableClientTLS {

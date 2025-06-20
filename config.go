@@ -597,6 +597,9 @@ func loadConfig() (*config, []string, error) {
 	}
 
 	// TODO: Remove, for testing only.
+	if cfg.UseSPV {
+		cfg.AddPeers = append(cfg.AddPeers, defaultRPCClientCfg.Host)
+	}
 	if cfg.RPCConnect == "" {
 		cfg.RPCConnect = defaultRPCClientCfg.Host
 		cfg.BtcdUsername = defaultRPCClientCfg.User
@@ -669,7 +672,7 @@ func loadConfig() (*config, []string, error) {
 					}
 				}
 			}
-			if certs := readCAFile(); len(certs) > 0 {
+			if certs := readCAFile(&cfg); len(certs) > 0 {
 				cfg.rpcCerts = certs
 			}
 		}

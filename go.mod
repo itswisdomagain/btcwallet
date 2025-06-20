@@ -82,6 +82,6 @@ go 1.24.6
 replace (
 	// github.com/btcsuite/btcd => ../btcd
 	// github.com/lightninglabs/neutrino => ../neutrino
-	github.com/btcsuite/btcd => github.com/itswisdomagain/btcd v0.0.0-20250616121115-2bea76e7b248
+	github.com/btcsuite/btcd => github.com/itswisdomagain/btcd v0.0.0-20250617101202-2b5f0c1d8d93
 	github.com/lightninglabs/neutrino => github.com/itswisdomagain/neutrino v0.0.0-20250616130718-ce8e920a31b2
 )
