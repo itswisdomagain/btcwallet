@@ -49,6 +49,8 @@ var Methods = []struct {
 	{"listsinceblock", []interface{}{(*btcjson.ListSinceBlockResult)(nil)}},
 	{"listtransactions", returnsLTRArray},
 	{"listunspent", []interface{}{(*btcjson.ListUnspentResult)(nil)}},
+	{"mixaccount", nil},
+	{"mixoutput", nil},
 	{"lockunspent", returnsBool},
 	{"sendfrom", returnsString},
 	{"sendmany", returnsString},

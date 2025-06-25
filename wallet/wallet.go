@@ -27,7 +27,6 @@ import (
 	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wallet/txauthor"
@@ -168,12 +167,15 @@ type Wallet struct {
 	NtfnServer *NotificationServer
 
 	// Mixing
-	mixingEnabled bool
-	mixpool       *mixpool.Pool
-	mixSems       mixSemaphores
-	mixClient     *mixclient.Client
-	mixCtx        context.Context
-	stopMixClient context.CancelFunc
+	mixingEnabled    bool
+	mixAccount       string
+	mixBranch        uint32
+	mixChangeAccount string
+	mixpool          *mixpool.Pool
+	mixSems          mixSemaphores
+	mixClient        *mixclient.Client
+	mixCtx           context.Context
+	stopMixClient    context.CancelFunc
 
 	chainParams *chaincfg.Params
 	wg          sync.WaitGroup
@@ -256,12 +258,8 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanRPCHandler()
 }
 
-func (w *Wallet) EnableMixing(mixcLog btclog.Logger, mixSplitLimit int) {
-	w.mixingEnabled = true
-	w.mixpool = mixpool.NewPool((*mixpoolBlockchain)(w))
-	w.mixClient = mixclient.NewClient((*mixingWallet)(w))
-	w.mixClient.SetLogger(mixcLog)
-	w.mixSems = newMixSemaphores(mixSplitLimit)
+func (w *Wallet) MixingEnabled() (bool, string, uint32, string) {
+	return w.mixingEnabled, w.mixAccount, w.mixBranch, w.mixChangeAccount
 }
 
 func (w *Wallet) StartMixer() {
@@ -4455,11 +4453,11 @@ func create(db walletdb.DB, pubPass, privPass []byte,
 
 // Open loads an already-created wallet from the passed database and namespaces.
 func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
-	params *chaincfg.Params, recoveryWindow uint32) (*Wallet, error) {
+	params *chaincfg.Params, recoveryWindow uint32, mixCfg *MixingConfig) (*Wallet, error) {
 
 	return OpenWithRetry(
 		db, pubPass, cbs, params, recoveryWindow,
-		defaultSyncRetryInterval,
+		defaultSyncRetryInterval, mixCfg,
 	)
 }
 
@@ -4467,7 +4465,7 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 // namespaces and re-tries on errors during initial sync.
 func OpenWithRetry(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 	params *chaincfg.Params, recoveryWindow uint32,
-	syncRetryInterval time.Duration) (*Wallet, error) {
+	syncRetryInterval time.Duration, mixCfg *MixingConfig) (*Wallet, error) {
 
 	var (
 		addrMgr *waddrmgr.Manager
@@ -4539,6 +4537,17 @@ func OpenWithRetry(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 	w.NtfnServer = newNotificationServer(w)
 	w.TxStore.NotifyUnspent = func(hash *chainhash.Hash, index uint32) {
 		w.NtfnServer.notifyUnspentOutput(0, hash, index)
+	}
+
+	if mixCfg != nil {
+		w.mixingEnabled = true
+		w.mixAccount = mixCfg.MixAccount
+		w.mixBranch = mixCfg.MixBranch
+		w.mixChangeAccount = mixCfg.MixChangeAccount
+		w.mixSems = newMixSemaphores(mixCfg.MixSplitLimit)
+		w.mixpool = mixpool.NewPool((*mixpoolBlockchain)(w))
+		w.mixClient = mixclient.NewClient((*mixingWallet)(w))
+		w.mixClient.SetLogger(mixCfg.MixcLog)
 	}
 
 	return w, nil

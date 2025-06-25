@@ -264,6 +264,15 @@ var helpDescsEnUS = map[string]string{
 	"lockunspent-transactions": "Transaction outputs to lock or unlock",
 	"lockunspent--result0":     "The boolean 'true'",
 
+	// MixAccount help.
+	"mixaccount--synopsis": "Mix all outputs of an account.",
+	"mixaccount-feerate":   "Fee rate to use (in BTC/Kb)",
+
+	// MixOutput help.
+	"mixoutput--synopsis": "Mix a specific output.",
+	"mixoutput-outpoint":  `Outpoint (in form "txhash:index") to mix`,
+	"mixoutput-feerate":   "Fee rate to use (in BTC/Kb)",
+
 	// SendFromCmd help.
 	"sendfrom--synopsis": "DEPRECATED -- Authors, signs, and sends a transaction that outputs some amount to a payment address.\n" +
 		"A change output is automatically included to send extra output value back to the original account.",

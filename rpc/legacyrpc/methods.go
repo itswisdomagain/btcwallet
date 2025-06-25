@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -98,6 +99,8 @@ var rpcHandlers = map[string]struct {
 	"listtransactions":       {handler: listTransactions},
 	"listunspent":            {handler: listUnspent},
 	"lockunspent":            {handler: lockUnspent},
+	"mixaccount":             {handler: mixAccount},
+	"mixoutput":              {handler: mixOutput},
 	"sendfrom":               {handlerWithChain: sendFrom},
 	"sendmany":               {handler: sendMany},
 	"sendtoaddress":          {handler: sendToAddress},
@@ -1355,6 +1358,99 @@ func lockUnspent(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 		}
 	}
 	return true, nil
+}
+
+func mixAccount(icmd interface{}, w *wallet.Wallet) (any, error) {
+	cmd := icmd.(*btcjson.MixAccountCmd)
+
+	feeRate := txrules.DefaultRelayFeePerKb
+	if cmd.FeeRate != nil {
+		// Check that the feerate is not negative.
+		if *cmd.FeeRate < 0 {
+			return nil, ErrNeedPositiveAmount
+		}
+
+		var err error
+		feeRate, err = btcutil.NewAmount(*cmd.FeeRate)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	mixingEnabled, mixAccountName, mixBranch, changeAccountName := w.MixingEnabled()
+	if !mixingEnabled {
+		return nil, errors.New("mixing is not configured")
+	}
+
+	mixAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, mixAccountName)
+	if err != nil {
+		return nil, err
+	}
+	changeAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, changeAccountName)
+	if err != nil {
+		return nil, err
+	}
+
+	err = w.MixAccount(changeAccount, mixAccount, mixBranch, feeRate)
+	return nil, err
+}
+
+func mixOutput(icmd interface{}, w *wallet.Wallet) (any, error) {
+	cmd := icmd.(*btcjson.MixOutputCmd)
+
+	outpoint, err := parseOutpoint(cmd.Outpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	feeRate := txrules.DefaultRelayFeePerKb
+	if cmd.FeeRate != nil {
+		// Check that the feerate is not negative.
+		if *cmd.FeeRate < 0 {
+			return nil, ErrNeedPositiveAmount
+		}
+
+		var err error
+		feeRate, err = btcutil.NewAmount(*cmd.FeeRate)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	mixingEnabled, mixAccountName, mixBranch, changeAccountName := w.MixingEnabled()
+	if !mixingEnabled {
+		return nil, errors.New("mixing is not configured")
+	}
+
+	mixAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, mixAccountName)
+	if err != nil {
+		return nil, err
+	}
+	changeAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, changeAccountName)
+	if err != nil {
+		return nil, err
+	}
+
+	err = w.MixOutput(outpoint, changeAccount, mixAccount, mixBranch, feeRate)
+	return nil, err
+}
+
+func parseOutpoint(s string) (*wire.OutPoint, error) {
+	if len(s) < 66 {
+		return nil, errors.New("invalid outpoint: bad len")
+	}
+	if s[64] != ':' { // sep follows 32 bytes of hex
+		return nil, errors.New("invalid outpoint: bad separator")
+	}
+	hash, err := chainhash.NewHashFromStr(s[:64])
+	if err != nil {
+		return nil, fmt.Errorf("invalid outpoint hash: %w", err)
+	}
+	index, err := strconv.ParseUint(s[65:], 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid outpoint index: %w", err)
+	}
+	return &wire.OutPoint{Hash: *hash, Index: uint32(index)}, nil
 }
 
 // makeOutputs creates a slice of transaction outputs from a pair of address

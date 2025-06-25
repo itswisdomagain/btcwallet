@@ -72,9 +72,20 @@ func walletMain() error {
 		}()
 	}
 
+	var mixCfg *wallet.MixingConfig
+	if cfg.MixingEnabled {
+		mixCfg = &wallet.MixingConfig{
+			MixAccount:       cfg.mixedAccount,
+			MixBranch:        cfg.mixedBranch,
+			MixChangeAccount: cfg.ChangeAccount,
+			MixSplitLimit:    cfg.MixSplitLimit,
+			MixcLog:          mixcLog,
+		}
+	}
+
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
 	loader := wallet.NewLoader(
-		activeNet.Params, dbDir, true, cfg.DBTimeout, 250, cfg.MixingEnabled, cfg.MixSplitLimit,
+		activeNet.Params, dbDir, true, cfg.DBTimeout, 250, mixCfg,
 	)
 
 	// Create and start HTTP server to serve wallet client connections.
@@ -282,9 +293,6 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 		// mutex is used to make this concurrent safe.
 		associateRPCClient := func(w *wallet.Wallet) {
 			w.SynchronizeRPC(chainClient)
-			if loader.MixingEnabled() {
-				w.EnableMixing(mixcLog, loader.MixSplitLimit())
-			}
 			if legacyRPCServer != nil {
 				legacyRPCServer.SetChainServer(chainClient)
 			}

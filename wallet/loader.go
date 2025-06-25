@@ -14,6 +14,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btclog"
 	"github.com/btcsuite/btcwallet/internal/prompt"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/walletdb"
@@ -65,6 +66,14 @@ func WithWalletSyncRetryInterval(interval time.Duration) LoaderOption {
 	}
 }
 
+type MixingConfig struct {
+	MixAccount       string
+	MixBranch        uint32
+	MixChangeAccount string
+	MixSplitLimit    int
+	MixcLog          btclog.Logger
+}
+
 // Loader implements the creating of new and opening of existing wallets, while
 // providing a callback system for other subsystems to handle the loading of a
 // wallet.  This is primarily intended for use by the RPC servers, to enable
@@ -74,6 +83,7 @@ func WithWalletSyncRetryInterval(interval time.Duration) LoaderOption {
 // Loader is safe for concurrent access.
 type Loader struct {
 	cfg            *loaderConfig
+	mixCfg         *MixingConfig
 	callbacks      []func(*Wallet)
 	chainParams    *chaincfg.Params
 	dbDirPath      string
@@ -82,8 +92,6 @@ type Loader struct {
 	recoveryWindow uint32
 	wallet         *Wallet
 	localDB        bool
-	mixingEnabled  bool
-	mixSplitLimit  int
 	walletExists   func() (bool, error)
 	walletCreated  func(db walletdb.ReadWriteTx) error
 	db             walletdb.DB
@@ -95,7 +103,7 @@ type Loader struct {
 // starting from the last SyncedTo height.
 func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	noFreelistSync bool, timeout time.Duration, recoveryWindow uint32,
-	mixingEnabled bool, mixSplitLimit int, opts ...LoaderOption) *Loader {
+	mixCfg *MixingConfig, opts ...LoaderOption) *Loader {
 
 	cfg := defaultLoaderConfig()
 	for _, opt := range opts {
@@ -110,8 +118,7 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 		timeout:        timeout,
 		recoveryWindow: recoveryWindow,
 		localDB:        true,
-		mixingEnabled:  mixingEnabled,
-		mixSplitLimit:  mixSplitLimit,
+		mixCfg:         mixCfg,
 	}
 }
 
@@ -121,7 +128,7 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 // function is also passed which will override Loader.WalletExists().
 func NewLoaderWithDB(chainParams *chaincfg.Params, recoveryWindow uint32,
 	db walletdb.DB, walletExists func() (bool, error),
-	mixingEnabled bool, mixSplitLimit int, opts ...LoaderOption) (*Loader, error) {
+	mixCfg *MixingConfig, opts ...LoaderOption) (*Loader, error) {
 
 	if db == nil {
 		return nil, fmt.Errorf("no DB provided")
@@ -141,19 +148,10 @@ func NewLoaderWithDB(chainParams *chaincfg.Params, recoveryWindow uint32,
 		chainParams:    chainParams,
 		recoveryWindow: recoveryWindow,
 		localDB:        false,
-		mixingEnabled:  mixingEnabled,
-		mixSplitLimit:  mixSplitLimit,
+		mixCfg:         mixCfg,
 		walletExists:   walletExists,
 		db:             db,
 	}, nil
-}
-
-func (l *Loader) MixingEnabled() bool {
-	return l.mixingEnabled
-}
-
-func (l *Loader) MixSplitLimit() int {
-	return l.mixSplitLimit
 }
 
 // onLoaded executes each added callback and prevents loader from loading any
@@ -304,7 +302,7 @@ func (l *Loader) createNewWallet(pubPassphrase, privPassphrase []byte,
 	// Open the newly-created wallet.
 	w, err := OpenWithRetry(
 		l.db, pubPassphrase, nil, l.chainParams, l.recoveryWindow,
-		l.cfg.walletSyncRetryInterval,
+		l.cfg.walletSyncRetryInterval, l.mixCfg,
 	)
 	if err != nil {
 		return nil, err
@@ -367,7 +365,7 @@ func (l *Loader) OpenExistingWallet(pubPassphrase []byte,
 	}
 	w, err := OpenWithRetry(
 		l.db, pubPassphrase, cbs, l.chainParams, l.recoveryWindow,
-		l.cfg.walletSyncRetryInterval,
+		l.cfg.walletSyncRetryInterval, l.mixCfg,
 	)
 	if err != nil {
 		// If opening the wallet fails (e.g. because of wrong
