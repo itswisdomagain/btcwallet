@@ -74,12 +74,16 @@ func walletMain() error {
 
 	var mixCfg *wallet.MixingConfig
 	if cfg.MixingEnabled {
-		mixCfg = &wallet.MixingConfig{
-			MixAccount:       cfg.mixedAccount,
-			MixBranch:        cfg.mixedBranch,
-			MixChangeAccount: cfg.ChangeAccount,
-			MixSplitLimit:    cfg.MixSplitLimit,
-			MixcLog:          mixcLog,
+		if cfg.TestNet3 {
+			mixCfg = &wallet.MixingConfig{
+				MixAccount:       cfg.mixedAccount,
+				MixBranch:        cfg.mixedBranch,
+				MixChangeAccount: cfg.ChangeAccount,
+				MixSplitLimit:    cfg.MixSplitLimit,
+				MixcLog:          mixcLog,
+			}
+		} else {
+			log.Errorf("Mixing is currently only supported on testnet3!")
 		}
 	}
 
