@@ -400,11 +400,25 @@ SplitPoints:
 		return errThrottledMixRequest
 	}
 
-	// TODO: Skip mixing this input at this time if the fee would eat up a high
-	// percentage of the input amount, unless the fee amount was gotten using a
-	// reasonable fee rate (a little over the lowest possible fee rate).
-	fee := amount - btcutil.Amount(count)*mixValue - changeValue
-	feePercentage := fee * 100 / amount
+	// Skip mixing this input at this time if the fee would eat up a high
+	// percentage of the input amount. Mixing would be re-attempted when the fee
+	// rate drops.
+	fee := amount - btcutil.Amount(count)*mixValue
+	if changeValue > 0 {
+		fee -= changeValue
+	}
+	feePercentage := fee.ToBTC() / amount.ToBTC()
+
+	// Maximum allowed fee percentage is 60% for the lowest split denomination
+	// and 30% for higher denominations.
+	maxFeePercentage := 0.3
+	if mixValue == splitPoints[len(splitPoints)-1] {
+		maxFeePercentage = 0.6
+	}
+	if feePercentage > maxFeePercentage && feeRate > txrules.DefaultRelayFeePerKb {
+		return makeError("fee rate too high (%d sats/kb), %.2f%% of input amount will be used as fees",
+			feeRate, feePercentage*100)
+	}
 
 	var change *wire.TxOut
 	if changeValue > 0 {
@@ -425,8 +439,7 @@ SplitPoints:
 		}
 	}
 
-	log.Infof("Mixing output %v (%v). Fee (%v) is %d%%. Fee rate is %v",
-		output, amount, fee, feePercentage, feeRate)
+	log.Infof("Mixing output %v (%v)", output, amount)
 
 	expires, err := dicemixExpiry(chainClient, w.chainParams)
 	if err != nil {

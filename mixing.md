@@ -92,6 +92,8 @@ Thus, btcd rpc connection details are required for mixing, even if the wallet is
 
 A `maxfeerate` option has been added to the wallet config to protect against excessive fees recommended by the btcd rpc server. If the recommended fee rate exceeds the user-configured maxfeerate, mixing will be skipped until when the recommended fee rate falls below the maxfeerate.
 
+In addition to `maxfeerate` config option, the percentage of an input's amount that will be contributed as fees is calculated and capped, to protect against occasional high fee rates. When the percentage fee contribution exceeds a reasonable percentage (60% when mixing to the lowest mix denomination and 30% when mixing to higher denominations), mixing will be skipped and re-attempted when the recommended fee rate becomes more favorable.
+
 ### Changelog
 
 #### btcd
@@ -119,7 +121,6 @@ A `maxfeerate` option has been added to the wallet config to protect against exc
 
 ### Next steps
 
-- Skip mixing if using the recommended fee rate will result in a large portion of a participant's inputs being used as fees.
 - Remove default btcd rpc connection parameters from codebase.
 - Reset minimum number of required mix participants to 4.
 - Permit mixing in mainnet network.
