@@ -67,11 +67,9 @@ func WithWalletSyncRetryInterval(interval time.Duration) LoaderOption {
 }
 
 type MixingConfig struct {
-	MixAccount       string
-	MixBranch        uint32
-	MixChangeAccount string
-	MixSplitLimit    int
-	MixcLog          btclog.Logger
+	MixingEnabled bool
+	MixSplitLimit int
+	MixcLog       btclog.Logger
 }
 
 // Loader implements the creating of new and opening of existing wallets, while

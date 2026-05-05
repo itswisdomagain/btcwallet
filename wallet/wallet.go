@@ -167,15 +167,14 @@ type Wallet struct {
 	NtfnServer *NotificationServer
 
 	// Mixing
-	mixingEnabled    bool
-	mixAccount       string
-	mixBranch        uint32
-	mixChangeAccount string
-	mixpool          *mixpool.Pool
-	mixSems          mixSemaphores
-	mixClient        *mixclient.Client
-	mixCtx           context.Context
-	stopMixClient    context.CancelFunc
+	mixingEnabled bool
+	mixSems       mixSemaphores
+	mixpool       *mixpool.Pool
+	mixClient     *mixclient.Client
+
+	// additional fields for stopping mix client
+	mixCtx        context.Context
+	stopMixClient context.CancelFunc
 
 	chainParams *chaincfg.Params
 	wg          sync.WaitGroup
@@ -256,10 +255,6 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanBatchHandler()
 	go w.rescanProgressHandler()
 	go w.rescanRPCHandler()
-}
-
-func (w *Wallet) MixingEnabled() (bool, string, uint32, string) {
-	return w.mixingEnabled, w.mixAccount, w.mixBranch, w.mixChangeAccount
 }
 
 func (w *Wallet) StartMixer() {
@@ -4532,6 +4527,9 @@ func OpenWithRetry(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 		chainParams:         params,
 		quit:                make(chan struct{}),
 		syncRetryInterval:   syncRetryInterval,
+
+		mixingEnabled: mixCfg.MixingEnabled,
+		mixSems:       newMixSemaphores(mixCfg.MixSplitLimit),
 	}
 
 	w.NtfnServer = newNotificationServer(w)
@@ -4539,12 +4537,7 @@ func OpenWithRetry(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 		w.NtfnServer.notifyUnspentOutput(0, hash, index)
 	}
 
-	if mixCfg != nil {
-		w.mixingEnabled = true
-		w.mixAccount = mixCfg.MixAccount
-		w.mixBranch = mixCfg.MixBranch
-		w.mixChangeAccount = mixCfg.MixChangeAccount
-		w.mixSems = newMixSemaphores(mixCfg.MixSplitLimit)
+	if w.mixingEnabled {
 		w.mixpool = mixpool.NewPool((*mixpoolBlockchain)(w))
 		w.mixClient = mixclient.NewClient((*mixingWallet)(w))
 		w.mixClient.SetLogger(mixCfg.MixcLog)

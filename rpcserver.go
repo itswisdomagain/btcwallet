@@ -164,7 +164,13 @@ func startRPCServers(walletLoader *wallet.Loader) (*grpc.Server, *legacyrpc.Serv
 			MaxPOSTClients:      cfg.LegacyRPCMaxClients,
 			MaxWebsocketClients: cfg.LegacyRPCMaxWebsockets,
 		}
-		legacyServer = legacyrpc.NewServer(&opts, walletLoader, listeners)
+		cfg := legacyrpc.Config{
+			MixingEnabled:    cfg.MixingEnabled,
+			MixAccount:       cfg.mixedAccount,
+			MixBranch:        cfg.mixedBranch,
+			MixChangeAccount: cfg.ChangeAccount,
+		}
+		legacyServer = legacyrpc.NewServer(&opts, cfg, walletLoader, listeners)
 	}
 
 	// Error when neither the GRPC nor legacy RPC servers can be started.

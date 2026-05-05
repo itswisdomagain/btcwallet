@@ -7,6 +7,7 @@ package legacyrpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -58,9 +59,13 @@ type requestHandler func(interface{}, *wallet.Wallet) (interface{}, error)
 // requestHandlerChain is a requestHandler that also takes a parameter for
 type requestHandlerChainRequired func(interface{}, *wallet.Wallet, *chain.RPCClient) (interface{}, error)
 
+// mixingRequestHandler is like requestHandler but takes a mixCfg parameter.
+type mixingRequestHandler func(interface{}, Config, *wallet.Wallet) (interface{}, error)
+
 var rpcHandlers = map[string]struct {
 	handler          requestHandler
 	handlerWithChain requestHandlerChainRequired
+	mixingHandler    mixingRequestHandler
 
 	// Function variables cannot be compared against anything but nil, so
 	// use a boolean to record whether help generation is necessary.  This
@@ -99,8 +104,8 @@ var rpcHandlers = map[string]struct {
 	"listtransactions":       {handler: listTransactions},
 	"listunspent":            {handler: listUnspent},
 	"lockunspent":            {handler: lockUnspent},
-	"mixaccount":             {handler: mixAccount},
-	"mixoutput":              {handler: mixOutput},
+	"mixaccount":             {mixingHandler: mixAccount},
+	"mixoutput":              {mixingHandler: mixOutput},
 	"sendfrom":               {handlerWithChain: sendFrom},
 	"sendmany":               {handler: sendMany},
 	"sendtoaddress":          {handler: sendToAddress},
@@ -167,7 +172,7 @@ type lazyHandler func() (interface{}, *btcjson.RPCError)
 // returning a closure that will execute it with the (required) wallet and
 // (optional) consensus RPC server.  If no handlers are found and the
 // chainClient is not nil, the returned handler performs RPC passthrough.
-func lazyApplyHandler(request *btcjson.Request, w *wallet.Wallet, chainClient chain.Interface) lazyHandler {
+func lazyApplyHandler(request *btcjson.Request, w *wallet.Wallet, chainClient chain.Interface, cfg Config) lazyHandler {
 	handlerData, ok := rpcHandlers[request.Method]
 	if ok && handlerData.handlerWithChain != nil && w != nil && chainClient != nil {
 		return func() (interface{}, *btcjson.RPCError) {
@@ -190,6 +195,7 @@ func lazyApplyHandler(request *btcjson.Request, w *wallet.Wallet, chainClient ch
 				}
 			}
 		}
+
 	}
 	if ok && handlerData.handler != nil && w != nil {
 		return func() (interface{}, *btcjson.RPCError) {
@@ -198,6 +204,19 @@ func lazyApplyHandler(request *btcjson.Request, w *wallet.Wallet, chainClient ch
 				return nil, btcjson.ErrRPCInvalidRequest
 			}
 			resp, err := handlerData.handler(cmd, w)
+			if err != nil {
+				return nil, jsonError(err)
+			}
+			return resp, nil
+		}
+	}
+	if ok && handlerData.mixingHandler != nil && w != nil {
+		return func() (interface{}, *btcjson.RPCError) {
+			cmd, err := btcjson.UnmarshalCmd(request)
+			if err != nil {
+				return nil, btcjson.ErrRPCInvalidRequest
+			}
+			resp, err := handlerData.mixingHandler(cmd, cfg, w)
 			if err != nil {
 				return nil, jsonError(err)
 			}
@@ -1360,8 +1379,11 @@ func lockUnspent(icmd interface{}, w *wallet.Wallet) (interface{}, error) {
 	return true, nil
 }
 
-func mixAccount(icmd interface{}, w *wallet.Wallet) (any, error) {
+func mixAccount(icmd interface{}, cfg Config, w *wallet.Wallet) (any, error) {
 	cmd := icmd.(*btcjson.MixAccountCmd)
+	if !cfg.MixingEnabled {
+		return nil, errors.New("mixing is not configured")
+	}
 
 	feeRate := txrules.DefaultRelayFeePerKb
 	if cmd.FeeRate != nil {
@@ -1377,26 +1399,26 @@ func mixAccount(icmd interface{}, w *wallet.Wallet) (any, error) {
 		}
 	}
 
-	mixingEnabled, mixAccountName, mixBranch, changeAccountName := w.MixingEnabled()
-	if !mixingEnabled {
-		return nil, errors.New("mixing is not configured")
-	}
-
-	mixAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, mixAccountName)
+	mixAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, cfg.MixAccount)
 	if err != nil {
 		return nil, err
 	}
-	changeAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, changeAccountName)
+	changeAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, cfg.MixChangeAccount)
 	if err != nil {
 		return nil, err
 	}
 
-	err = w.MixAccount(changeAccount, mixAccount, mixBranch, feeRate)
+	mixBranch := cfg.MixBranch
+
+	err = w.MixAccount(context.TODO(), changeAccount, mixAccount, mixBranch, feeRate)
 	return nil, err
 }
 
-func mixOutput(icmd interface{}, w *wallet.Wallet) (any, error) {
+func mixOutput(icmd interface{}, cfg Config, w *wallet.Wallet) (any, error) {
 	cmd := icmd.(*btcjson.MixOutputCmd)
+	if !cfg.MixingEnabled {
+		return nil, errors.New("mixing is not configured")
+	}
 
 	outpoint, err := parseOutpoint(cmd.Outpoint)
 	if err != nil {
@@ -1417,21 +1439,18 @@ func mixOutput(icmd interface{}, w *wallet.Wallet) (any, error) {
 		}
 	}
 
-	mixingEnabled, mixAccountName, mixBranch, changeAccountName := w.MixingEnabled()
-	if !mixingEnabled {
-		return nil, errors.New("mixing is not configured")
-	}
-
-	mixAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, mixAccountName)
+	mixAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, cfg.MixAccount)
 	if err != nil {
 		return nil, err
 	}
-	changeAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, changeAccountName)
+	changeAccount, err := w.AccountNumber(waddrmgr.KeyScopeBIP0044, cfg.MixChangeAccount)
 	if err != nil {
 		return nil, err
 	}
 
-	err = w.MixOutput(outpoint, changeAccount, mixAccount, mixBranch, feeRate)
+	mixBranch := cfg.MixBranch
+
+	err = w.MixOutput(context.TODO(), outpoint, changeAccount, mixAccount, mixBranch, feeRate)
 	return nil, err
 }
 

@@ -53,6 +53,13 @@ func (c *websocketClient) send(b []byte) error {
 	}
 }
 
+type Config struct {
+	MixingEnabled    bool
+	MixAccount       string
+	MixBranch        uint32
+	MixChangeAccount string
+}
+
 // Server holds the items the RPC server may need to access (auth,
 // config, shutdown, etc.)
 type Server struct {
@@ -61,6 +68,8 @@ type Server struct {
 	walletLoader *wallet.Loader
 	chainClient  chain.Interface
 	handlerMu    sync.Mutex
+
+	cfg Config
 
 	listeners []net.Listener
 	authsha   [sha256.Size]byte
@@ -84,7 +93,7 @@ func jsonAuthFail(w http.ResponseWriter) {
 
 // NewServer creates a new server for serving legacy RPC client connections,
 // both HTTP POST and websocket.
-func NewServer(opts *Options, walletLoader *wallet.Loader, listeners []net.Listener) *Server {
+func NewServer(opts *Options, cfg Config, walletLoader *wallet.Loader, listeners []net.Listener) *Server {
 	serveMux := http.NewServeMux()
 	const rpcAuthTimeoutSeconds = 10
 
@@ -97,6 +106,7 @@ func NewServer(opts *Options, walletLoader *wallet.Loader, listeners []net.Liste
 			ReadTimeout: time.Second * rpcAuthTimeoutSeconds,
 		},
 		walletLoader:        walletLoader,
+		cfg:                 cfg,
 		maxPostClients:      opts.MaxPOSTClients,
 		maxWebsocketClients: opts.MaxWebsocketClients,
 		listeners:           listeners,
@@ -279,7 +289,7 @@ func (s *Server) handlerClosure(request *btcjson.Request) lazyHandler {
 	}
 	s.handlerMu.Unlock()
 
-	return lazyApplyHandler(request, wallet, chainClient)
+	return lazyApplyHandler(request, wallet, chainClient, s.cfg)
 }
 
 // ErrNoAuth represents an error where authentication could not succeed

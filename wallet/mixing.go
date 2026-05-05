@@ -282,7 +282,7 @@ var (
 
 // MixOutput performs a mix of a single output into standard sized outputs
 // under the current ticket price.
-func (w *Wallet) MixOutput(output *wire.OutPoint, changeAccount, mixAccount, mixBranch uint32,
+func (w *Wallet) MixOutput(ctx context.Context, output *wire.OutPoint, changeAccount, mixAccount, mixBranch uint32,
 	feeRate btcutil.Amount) error {
 
 	makeError := func(s string, values ...interface{}) error {
@@ -454,7 +454,7 @@ SplitPoints:
 		return makeError("addCoinJoinInput error: %w", err)
 	}
 
-	err = w.mixClient.Dicemix(w.mixCtx, cj)
+	err = w.mixClient.Dicemix(ctx, cj)
 	if err != nil {
 		return makeError("mixClient.Dicemix error: %w", err)
 	}
@@ -470,7 +470,7 @@ SplitPoints:
 //
 // Due to performance concerns of timing out in a CoinShuffle++ run, this
 // function may throttle how many of the outputs are mixed each call.
-func (w *Wallet) MixAccount(changeAccount, mixAccount, mixBranch uint32, feeRate btcutil.Amount) error {
+func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount, mixBranch uint32, feeRate btcutil.Amount) error {
 	// Mixing requests require wallet mixing support.
 	if !w.mixingEnabled {
 		return fmt.Errorf("wallet.MixAccount: wallet mixing support is disabled")
@@ -516,7 +516,7 @@ func (w *Wallet) MixAccount(changeAccount, mixAccount, mixBranch uint32, feeRate
 	for i := range credits {
 		op := &credits[i].OutPoint
 		g.Go(func() error {
-			err := w.MixOutput(op, changeAccount, mixAccount, mixBranch, feeRate)
+			err := w.MixOutput(ctx, op, changeAccount, mixAccount, mixBranch, feeRate)
 			if errors.Is(err, errThrottledMixRequest) {
 				return nil
 			}
@@ -571,7 +571,7 @@ func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, fet
 					return
 				}
 
-				err = w.MixAccount(changeAccount, mixAccount, mixBranch, feeRate)
+				err = w.MixAccount(w.mixCtx, changeAccount, mixAccount, mixBranch, feeRate)
 				if err != nil {
 					log.Error(err)
 				}
