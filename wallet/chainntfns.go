@@ -162,6 +162,7 @@ func (w *Wallet) handleChainNotifications() {
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
 					return w.connectBlock(tx, wtxmgr.BlockMeta(n))
 				})
+				w.expireMixMessages(n.Block.Height)
 				notificationName = "block connected"
 			case chain.BlockDisconnected:
 				err = walletdb.Update(w.db, func(tx walletdb.ReadWriteTx) error {
@@ -207,7 +208,7 @@ func (w *Wallet) handleChainNotifications() {
 				w.SetChainSynced(true)
 				// Request notifications for mixing messages.
 				if w.mixingEnabled {
-					w.StartMixer()
+					w.RunMixClient()
 					if err := chainClient.NotifyMixMessages(w); err != nil {
 						log.Errorf("chainClient.NotifyMixMessages error: %v", err)
 					}

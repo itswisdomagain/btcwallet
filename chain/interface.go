@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/mixing"
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
@@ -57,7 +58,7 @@ type Interface interface {
 }
 
 type MixingWallet interface {
-	AcceptMixMessage(msg mixing.Message) error
+	AcceptMixMessageBySource(msg mixing.Message, source mixpool.Source) error
 	MixMessage(query *chainhash.Hash) (mixing.Message, error)
 }
 

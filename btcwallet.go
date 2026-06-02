@@ -72,14 +72,14 @@ func walletMain() error {
 		}()
 	}
 
-	mixCfg := &wallet.MixingConfig{
+	mixCfg := wallet.MixingConfig{
 		MixingEnabled: cfg.MixingEnabled,
 		MixSplitLimit: cfg.MixSplitLimit,
 		MixcLog:       mixcLog,
 	}
-	if !cfg.TestNet3 {
+	if !cfg.TestNet3 && !cfg.SimNet && !cfg.RegressionNet {
 		mixCfg.MixingEnabled = false
-		log.Errorf("Mixing is currently only supported on testnet3!")
+		log.Errorf("Mixing is currently only supported on testnet3, simnet and regtest!")
 	}
 
 	dbDir := networkDir(cfg.AppDataDir.Value, activeNet.Params)
@@ -272,7 +272,7 @@ func rpcClientConnectLoop(legacyRPCServer *legacyrpc.Server, loader *wallet.Load
 				continue
 			}
 			chainClient = chain.NewNeutrinoClient(activeNet.Params, chainService)
-			err = chainClient.Start()
+			err = chainClient.Start(context.Background())
 			if err != nil {
 				log.Errorf("Couldn't start Neutrino client: %s", err)
 			}

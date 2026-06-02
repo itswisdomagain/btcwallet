@@ -81,7 +81,7 @@ type MixingConfig struct {
 // Loader is safe for concurrent access.
 type Loader struct {
 	cfg            *loaderConfig
-	mixCfg         *MixingConfig
+	mixCfg         MixingConfig
 	callbacks      []func(*Wallet)
 	chainParams    *chaincfg.Params
 	dbDirPath      string
@@ -101,7 +101,7 @@ type Loader struct {
 // starting from the last SyncedTo height.
 func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 	noFreelistSync bool, timeout time.Duration, recoveryWindow uint32,
-	mixCfg *MixingConfig, opts ...LoaderOption) *Loader {
+	mixCfg MixingConfig, opts ...LoaderOption) *Loader {
 
 	cfg := defaultLoaderConfig()
 	for _, opt := range opts {
@@ -126,7 +126,7 @@ func NewLoader(chainParams *chaincfg.Params, dbDirPath string,
 // function is also passed which will override Loader.WalletExists().
 func NewLoaderWithDB(chainParams *chaincfg.Params, recoveryWindow uint32,
 	db walletdb.DB, walletExists func() (bool, error),
-	mixCfg *MixingConfig, opts ...LoaderOption) (*Loader, error) {
+	mixCfg MixingConfig, opts ...LoaderOption) (*Loader, error) {
 
 	if db == nil {
 		return nil, fmt.Errorf("no DB provided")

@@ -20,12 +20,12 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/mixing"
+	"github.com/btcsuite/btcd/mixing/mixpool"
 	"github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wtxmgr"
 	"github.com/decred/dcrd/crypto/blake256"
-	"github.com/decred/dcrd/mixing/mixpool"
 )
 
 // RPCClient represents a persistent client connection to a bitcoin RPC server
@@ -607,7 +607,7 @@ func (c *RPCClient) handleMixMessage(msg mixing.Message) error {
 	msg.WriteHash(c.blake256Hasher)
 	c.blake256HasherMu.Unlock()
 
-	err := wallet.AcceptMixMessage(msg)
+	err := wallet.AcceptMixMessageBySource(msg, mixpool.ZeroSource)
 	var e *mixpool.MissingOwnPRError
 	if errors.As(err, &e) {
 		ke, ok := msg.(*wire.MsgMixKeyExchange)
@@ -620,7 +620,7 @@ func (c *RPCClient) handleMixMessage(msg mixing.Message) error {
 			pr.WriteHash(c.blake256Hasher)
 			c.blake256HasherMu.Unlock()
 
-			err = wallet.AcceptMixMessage(pr)
+			err = wallet.AcceptMixMessageBySource(pr, mixpool.ZeroSource)
 		}
 		return err
 	}

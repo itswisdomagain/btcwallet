@@ -170,9 +170,10 @@ type Wallet struct {
 	mixingEnabled bool
 	mixSems       mixSemaphores
 	mixpool       *mixpool.Pool
-	mixClient     *mixclient.Client
+	mixClient     atomic.Pointer[mixclient.Client]
 
-	// additional fields for stopping mix client
+	// additional fields for starting and stopping the mix client
+	newMixClient  func() *mixclient.Client
 	mixCtx        context.Context
 	stopMixClient context.CancelFunc
 
@@ -257,10 +258,26 @@ func (w *Wallet) SynchronizeRPC(chainClient chain.Interface) {
 	go w.rescanRPCHandler()
 }
 
-func (w *Wallet) StartMixer() {
-	if w.mixingEnabled && w.stopMixClient == nil {
+// RunMixClient should be called whenever mixing is enabled for the wallet, even
+// if auto mixing isn't enabled. This would allow the MixAccount and MixOutput
+// methods to function whenever needed.
+func (w *Wallet) RunMixClient() {
+	if w.stopMixClient != nil {
+		w.stopMixClient()
+	}
+
+	if w.mixingEnabled {
 		w.mixCtx, w.stopMixClient = context.WithCancel(context.Background())
-		go w.mixClient.Run(w.mixCtx)
+		c := w.newMixClient()
+		w.mixClient.Store(c)
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			err := c.Run(w.mixCtx)
+			if err != nil {
+				log.Errorf("mix client stopped: %v", err)
+			}
+		}()
 	}
 }
 
@@ -4448,7 +4465,7 @@ func create(db walletdb.DB, pubPass, privPass []byte,
 
 // Open loads an already-created wallet from the passed database and namespaces.
 func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
-	params *chaincfg.Params, recoveryWindow uint32, mixCfg *MixingConfig) (*Wallet, error) {
+	params *chaincfg.Params, recoveryWindow uint32, mixCfg MixingConfig) (*Wallet, error) {
 
 	return OpenWithRetry(
 		db, pubPass, cbs, params, recoveryWindow,
@@ -4460,7 +4477,7 @@ func Open(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 // namespaces and re-tries on errors during initial sync.
 func OpenWithRetry(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 	params *chaincfg.Params, recoveryWindow uint32,
-	syncRetryInterval time.Duration, mixCfg *MixingConfig) (*Wallet, error) {
+	syncRetryInterval time.Duration, mixCfg MixingConfig) (*Wallet, error) {
 
 	var (
 		addrMgr *waddrmgr.Manager
@@ -4539,8 +4556,11 @@ func OpenWithRetry(db walletdb.DB, pubPass []byte, cbs *waddrmgr.OpenCallbacks,
 
 	if w.mixingEnabled {
 		w.mixpool = mixpool.NewPool((*mixpoolBlockchain)(w))
-		w.mixClient = mixclient.NewClient((*mixingWallet)(w))
-		w.mixClient.SetLogger(mixCfg.MixcLog)
+		w.newMixClient = func() *mixclient.Client {
+			c := mixclient.NewClient((*mixingWallet)(w))
+			c.SetLogger(mixCfg.MixcLog)
+			return c
+		}
 	}
 
 	return w, nil

@@ -128,7 +128,7 @@ type config struct {
 	MixedAccount  string                  `long:"mixedaccount" description:"Account/branch used to derive CoinShuffle++ mixed outputs"`
 	mixedAccount  string
 	mixedBranch   uint32
-	ChangeAccount string `long:"changeaccount" description:"Account used to derive unmixed CoinJoin outputs in CoinShuffle++ protocol"`
+	ChangeAccount string `long:"changeaccount" description:"Account to send change when mixing"`
 	MixChange     bool   `long:"mixchange" description:"Use CoinShuffle++ to mix change account outputs into mix account"`
 	MixSplitLimit int    `long:"mixsplitlimit" description:"Connection limit to CoinShuffle++ server per change amount"`
 }
@@ -573,29 +573,28 @@ func loadConfig() (*config, []string, error) {
 
 	// TODO: Remove, for testing only.
 	if cfg.UseSPV {
-		cfg.AddPeers = append(cfg.AddPeers, "159.65.29.55:18333")
+		cfg.AddPeers = append(cfg.AddPeers, "138.68.167.251:18333")
 	}
 	if cfg.RPCConnect == "" {
-		cfg.RPCConnect = "159.65.29.55:18334"
+		cfg.RPCConnect = "138.68.167.251:18334"
 		cfg.BtcdUsername = "user"
 		cfg.BtcdPassword = "pass"
 		cfg.CAFile.UnmarshalFlag("test server ca")
 		cfg.rpcCerts = []byte(`-----BEGIN CERTIFICATE-----
-MIICwDCCAiGgAwIBAgIQd/MZ+H/WZIpNzjUGpPJkwzAKBggqhkjOPQQDBDA/MSAw
-HgYDVQQKExdidGNkIGF1dG9nZW5lcmF0ZWQgY2VydDEbMBkGA1UEAxMSdWJ1bnR1
-LWMtMi1sb24xLTAxMB4XDTI1MDUwNDEzNDExNFoXDTM1MDUwMzEzNDExNFowPzEg
-MB4GA1UEChMXYnRjZCBhdXRvZ2VuZXJhdGVkIGNlcnQxGzAZBgNVBAMTEnVidW50
-dS1jLTItbG9uMS0wMTCBmzAQBgcqhkjOPQIBBgUrgQQAIwOBhgAEALdR8kDxYvol
-EWfAglkrtRV1jlDfYVKsPOhZRMHkDVSgB7k5EckPL7iGr5J2wMHjYFymjM5xoRyX
-IZE96e3hAQEuAGfX3hRgtDQUqMLniJOE7bv5KvVGkA429YYt2GNejetJdoJN9yql
-hYQXOMV38jkJPgtbX6Jd2stvkrs9DKrw/iP2o4G7MIG4MA4GA1UdDwEB/wQEAwIC
-pDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBQ9Cll1aM/8VGRWaLQ8Be/ikrJy
-/DB2BgNVHREEbzBtghJ1YnVudHUtYy0yLWxvbjEtMDGCCWxvY2FsaG9zdIcEfwAA
-AYcQAAAAAAAAAAAAAAAAAAAAAYcEn0EdN4cEChAABocECmoAA4cQ/oAAAAAAAAAg
-X1f//vVmd4cQ/oAAAAAAAAB4mRj//vCmpTAKBggqhkjOPQQDBAOBjAAwgYgCQgEP
-yL7GF7l9vinSOzms6BO9ioiBHVvR7j7mmAXi/yLNF3zAaejTzVZgLKsq8bvJ6LdS
-u9gTD8VGtZHwrRKBFzWqaQJCAZJ1RE2Hr4sYJOK0OBJFK6defDbou+WTJINPd9T4
-ugZprz4E8X4hV9l8SfJokxNCZMKWkcl716OFTZaBlCRn8kZL
+MIICljCCAfigAwIBAgIRAPn4CDxNyBw2JI6b/aRMvLYwCgYIKoZIzj0EAwQwMTEg
+MB4GA1UEChMXYnRjZCBhdXRvZ2VuZXJhdGVkIGNlcnQxDTALBgNVBAMTBG5ldGQw
+HhcNMjYwNjAxMTQwNTQ1WhcNMzYwNTMwMTQwNTQ1WjAxMSAwHgYDVQQKExdidGNk
+IGF1dG9nZW5lcmF0ZWQgY2VydDENMAsGA1UEAxMEbmV0ZDCBmzAQBgcqhkjOPQIB
+BgUrgQQAIwOBhgAEAD9AWCoGZsWCAI+/PjpN2g2Z8wC2rGMogv4/EkH2srxTInQ8
+Tvyym7CYnvjgx9WtmtathOAMOMmpAvf2g2CTeRyeAfnAtKDdAgi0bWNGO3Rbr6YT
+VW3E5fisz8r+VHH41fFYr5uN1D95OgCRu2TIC+lzx9YQlzvOZu0Bi54okImMgJpr
+o4GtMIGqMA4GA1UdDwEB/wQEAwICpDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW
+BBSr+qUE43Dax+ZQ6IbNJgCfHtG5+zBoBgNVHREEYTBfggRuZXRkgglsb2NhbGhv
+c3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAGHBIpEp/uHBAoQAAaHBApqAAOHEP6A
+AAAAAAAAJEvd//67EcaHEP6AAAAAAAAARAR0//6hjjcwCgYIKoZIzj0EAwQDgYsA
+MIGHAkIBQ4Xn4W92kWZnv3BA+I/hBUNYCefiCk8J9hkfvzrfvHDhRVyrVl0kCdG5
+wd5q8MHF+pZBZGPmmrbNblwzGXomXvcCQWNGkX7rfw2MSnfzfKZEk9857UiUJoRv
+yaCzSzhir5sDlWJywuUGrmRWA6r2jorH17SeVRRzMoQwiQNcu5YOPcui
 -----END CERTIFICATE-----`)
 	}
 

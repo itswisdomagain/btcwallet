@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
@@ -25,7 +26,6 @@ import (
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/btcsuite/btcwallet/wtxmgr"
 	"github.com/decred/dcrd/crypto/ripemd160"
-	"github.com/decred/go-socks/socks"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -72,7 +72,7 @@ func (w *Wallet) makeGen(account, branch uint32) mixclient.GenFunc {
 		}
 
 		gen := make(wire.MixVect, mcount)
-		for i := uint32(0); i < mcount; i++ {
+		for i := range mcount {
 			hash160er := addresses[i].(Hash160er)
 			gen[i] = *hash160er.Hash160()
 		}
@@ -125,7 +125,7 @@ func (w *mixingWallet) SubmitMixMessage(ctx context.Context, msg mixing.Message)
 		}
 	}()
 
-	_, err = wallet.mixpool.AcceptMessage(msg)
+	_, err = wallet.mixpool.AcceptMessage(msg, mixpool.ZeroSource)
 	if err != nil {
 		return err
 	}
@@ -280,8 +280,8 @@ var (
 	errThrottledMixRequest = errors.New("throttled mix request for split denomination")
 )
 
-// MixOutput performs a mix of a single output into standard sized outputs
-// under the current ticket price.
+// MixOutput performs a mix of a single output into standard sized outputs. This
+// is a blocking call which only returns once the mix has been completed.
 func (w *Wallet) MixOutput(ctx context.Context, output *wire.OutPoint, changeAccount, mixAccount, mixBranch uint32,
 	feeRate btcutil.Amount) error {
 
@@ -342,10 +342,13 @@ func (w *Wallet) MixOutput(ctx context.Context, output *wire.OutPoint, changeAcc
 	// a constant.
 	var smallestMixChange = smallestMixChange(txrules.DefaultRelayFeePerKb)
 SplitPoints:
-	for i = 0; i < len(splitPoints); i++ {
+	for i = range len(splitPoints) {
 		last := i == len(splitPoints)-1
 		mixValue = splitPoints[i]
 
+		// The number of mixed outputs is capped to prevent a single mix being
+		// overwhelmingly funded by a single output, and to conserve memory
+		// resources.
 		count = min(uint32(amount/mixValue), 4)
 		for ; count > 0; count-- {
 			remValue = amount - btcutil.Amount(count)*mixValue
@@ -388,7 +391,7 @@ SplitPoints:
 			break SplitPoints
 		}
 	}
-	if i == len(splitPoints) {
+	if count == 0 {
 		return makeError("output %v (%v): %w", output, amount, errNoSplitDenomination)
 	}
 	select {
@@ -439,8 +442,6 @@ SplitPoints:
 		}
 	}
 
-	log.Infof("Mixing output %v (%v)", output, amount)
-
 	expires, err := dicemixExpiry(chainClient, w.chainParams)
 	if err != nil {
 		return makeError("dicemixExpiry error: %w", err)
@@ -454,7 +455,9 @@ SplitPoints:
 		return makeError("addCoinJoinInput error: %w", err)
 	}
 
-	err = w.mixClient.Dicemix(ctx, cj)
+	log.Infof("Mixing output %v (%v)", output, amount)
+
+	err = w.dicemix(ctx, cj)
 	if err != nil {
 		return makeError("mixClient.Dicemix error: %w", err)
 	}
@@ -466,7 +469,8 @@ SplitPoints:
 }
 
 // MixAccount individually mixes outputs of an account into standard
-// denominations, creating newly mixed outputs for a mixed account.
+// denominations, creating newly mixed outputs for a mixed account. This is a
+// blocking call which only returns once the mix has been completed.
 //
 // Due to performance concerns of timing out in a CoinShuffle++ run, this
 // function may throttle how many of the outputs are mixed each call.
@@ -512,24 +516,36 @@ func (w *Wallet) MixAccount(ctx context.Context, changeAccount, mixAccount, mixB
 		return fmt.Errorf("wallet.MixAccount: %w", err)
 	}
 
+	if len(credits) == 0 {
+		log.Debugf("Account %d has no outputs eligible for mixing", changeAccount)
+		return nil
+	}
+
 	var g errgroup.Group
+	var success atomic.Int32
 	for i := range credits {
 		op := &credits[i].OutPoint
 		g.Go(func() error {
 			err := w.MixOutput(ctx, op, changeAccount, mixAccount, mixBranch, feeRate)
-			if errors.Is(err, errThrottledMixRequest) {
-				return nil
+			if err == nil {
+				success.Add(1)
 			}
-			if errors.Is(err, errNoSplitDenomination) {
-				return nil
-			}
-			if errors.Is(err, socks.ErrPoolMaxConnections) {
-				return nil
+			switch {
+			case errors.Is(err, errNoSplitDenomination):
+				log.Debugf("Unable to mix output for account %d: %v",
+					changeAccount, err)
+				err = nil
+			case errors.Is(err, errThrottledMixRequest):
+				log.Debugf("Temporarily skipped output %v during account %d mix: %v",
+					op, changeAccount, err)
+				err = nil
 			}
 			return err
 		})
 	}
 	err = g.Wait()
+	log.Debugf("Mixed %d of %d selected outputs of account %d", success.Load(),
+		len(credits), changeAccount)
 	if err != nil {
 		return fmt.Errorf("wallet.MixAccount: %w", err)
 	}
@@ -565,6 +581,10 @@ func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, fet
 					return
 				}
 
+				if feeRate <= 0 {
+					feeRate = txrules.DefaultRelayFeePerKb
+				}
+
 				if feeRate > maxFeeRate {
 					log.Errorf("Skipping automixer actions: recommended fee rate (%s) > max fee rate (%s)",
 						feeRate, maxFeeRate)
@@ -580,13 +600,29 @@ func (w *Wallet) StartAutoMixer(changeAccount, mixAccount, mixBranch uint32, fet
 	}
 }
 
-// AcceptMixMessage adds a mixing message received from the network backend to
-// the wallet's mixpool.
-func (w *Wallet) AcceptMixMessage(msg mixing.Message) error {
-	_, err := w.mixpool.AcceptMessage(msg)
+// AcceptMixMessageBySource adds a mixing message received from the network
+// backend to the wallet's mixpool.
+func (w *Wallet) AcceptMixMessageBySource(msg mixing.Message, source mixpool.Source) error {
+	_, err := w.mixpool.AcceptMessage(msg, source)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (w *Wallet) expireMixMessages(height int32) {
+	mixc := w.mixClient.Load()
+	if mixc == nil {
+		return
+	}
+	mixc.ExpireMessages(uint32(height))
+}
+
+func (w *Wallet) dicemix(ctx context.Context, cj *mixclient.CoinJoin) error {
+	mixc := w.mixClient.Load()
+	if mixc == nil {
+		return fmt.Errorf("mixing client is not running")
+	}
+	return mixc.Dicemix(ctx, cj)
 }
